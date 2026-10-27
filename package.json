@@ -1,10 +1,11 @@
+
 {
-  "name": "block-vest-backend",
+  "name": "apexline-market-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
+  "description": "Apexline Market backend API",
+  "main": "Server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node Server.js"
   },
   "keywords": [],
   "author": "",
