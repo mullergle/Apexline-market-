@@ -171,9 +171,7 @@ app.get("/test", async (req, res) => {
 
 /* ---------------- SIGNUP: SEND CODE ---------------- */
 app.post("/signup/send-code", async (req, res) => {
-    // ✅ FORCE LOWERCASE EMAIL
-    const email = String(req.body.email || "").trim().toLowerCase(); 
-    const { fullName, phone, country, password, referred_by, language, currency } = req.body;
+    const { fullName, phone, country, email, password, referred_by, language, currency } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -183,7 +181,7 @@ app.post("/signup/send-code", async (req, res) => {
         .from("users")
         .select("id")
         .eq("email", email)
-        .maybeSingle(); // Use maybeSingle to prevent errors on no-match
+        .single();
 
     if (existingUser) {
         return res.json({ success: false, message: "Email already exists." });
@@ -195,7 +193,7 @@ app.post("/signup/send-code", async (req, res) => {
             full_name: fullName, 
             phone, 
             country, 
-            email: email, // ✅ Insert lowercase
+            email, 
             password,
             is_verified: false,
             email_verified: false,
@@ -245,19 +243,14 @@ app.post("/signup/send-code", async (req, res) => {
 
 /* ---------------- SIGNUP: VERIFY ---------------- */
 app.post("/signup/verify", async (req, res) => {
-    // ✅ FORCE LOWERCASE EMAIL
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const code = String(req.body.code || "").trim();
+    const { email, code } = req.body;
 
-    if (!email || !code) {
-        return res.status(400).json({ success: false, message: "Email and code are required." });
-    }
-
+    // 1. Fetch reset code
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
         .eq("email", email)
-        .maybeSingle();
+        .single();
 
     if (error || !resetData) {
         return res.status(401).json({ success: false, message: "Verification code not found or expired." });
@@ -268,21 +261,22 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code has expired." });
     }
 
-    if (String(resetData.code) !== code) {
+    if (resetData.code !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    // ✅ The update now works because the email is lowercase
+    // 2. THIS IS THE FIX: Use .select() to verify the update actually hit a row
     const { data: updatedRows, error: updateError } = await supabase
         .from("users")
         .update({ email_verified: true })
         .eq("email", email)
-        .select("id, full_name, email, email_verified");
+        .select("id, full_name, email, email_verified"); // Add this!
 
     if (updateError) {
         return res.status(500).json({ success: false, message: "Failed to verify email." });
     }
 
+    // 3. If no rows were returned, the update missed the user
     if (!updatedRows || updatedRows.length === 0) {
         console.error("❌ Update matched 0 rows for email:", email);
         return res.status(500).json({ success: false, message: "User not found. Please check your email casing." });
@@ -290,6 +284,7 @@ app.post("/signup/verify", async (req, res) => {
 
     const verifiedUser = updatedRows[0];
 
+    // 4. Send welcome email and return success
     await sendWelcomeEmail({
         to: email,
         fullName: verifiedUser?.full_name
@@ -308,8 +303,7 @@ app.post("/signup/verify", async (req, res) => {
 
 /* ---------------- SIGNUP (DIRECT) ---------------- */
 app.post("/signup", async (req, res) => {
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const { fullName, phone, country, password, language, currency } = req.body;
+    const { fullName, phone, country, email, password, language, currency } = req.body;
 
     if (!fullName || !phone || !country || !email || !password) {
         return res.status(400).json({ success: false, message: "All fields are required." });
@@ -319,7 +313,7 @@ app.post("/signup", async (req, res) => {
         .from("users")
         .select("id")
         .eq("email", email)
-        .maybeSingle();
+        .single();
 
     if (existingUser) {
         return res.status(400).json({ success: false, message: "Email already exists." });
@@ -331,7 +325,7 @@ app.post("/signup", async (req, res) => {
             full_name: fullName, 
             phone, 
             country, 
-            email: email, 
+            email, 
             password, 
             is_verified: false,
             email_verified: true,
@@ -351,9 +345,7 @@ app.post("/signup", async (req, res) => {
 
 /* ---------------- LOGIN ---------------- */
 app.post("/login", async (req, res) => {
-    // ✅ FORCE LOWERCASE EMAIL
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const password = String(req.body.password || "");
+    const { email, password } = req.body;
 
     if (!email || !password) {
         return res.status(400).json({ success: false, message: "Email and password required." });
@@ -364,13 +356,13 @@ app.post("/login", async (req, res) => {
         .select("*")
         .eq("email", email)
         .eq("password", password)
-        .maybeSingle();
+        .single();
 
     if (error || !data) {
         return res.status(401).json({ success: false, message: "Invalid email or password." });
     }
 
-    if (data.email_verified !== true) {
+    if (data.email_verified === false) {
         return res.status(403).json({ success: false, message: "Please verify your email address before logging in." });
     }
 
@@ -446,7 +438,7 @@ app.get("/user/:id", async (req, res) => {
 
 /* ---------------- FORGOT PASSWORD ---------------- */
 app.post("/forgot-password", async (req, res) => {
-    const email = String(req.body.email || "").trim().toLowerCase();
+    const { email } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Please enter your email address." });
@@ -456,7 +448,7 @@ app.post("/forgot-password", async (req, res) => {
         .from("users")
         .select("id,email")
         .eq("email", email)
-        .maybeSingle();
+        .single();
 
     if (error || !user) {
         return res.json({ success: false, message: "No account was found with that email address." });
@@ -505,18 +497,19 @@ app.post("/forgot-password", async (req, res) => {
 
 /* ---------------- VERIFY CODE ---------------- */
 app.post("/verify-code", async (req, res) => {
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const code = String(req.body.code || "").trim();
+    let { email, code } = req.body;
 
     if (!email || !code) {
         return res.status(400).json({ success: false, message: "Email and code are required." });
     }
 
+    email = email.trim().toLowerCase();
+
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
         .eq("email", email)
-        .maybeSingle();
+        .single();
 
     if (error || !resetData) {
         return res.status(401).json({ success: false, message: "No reset request found for this email." });
@@ -527,7 +520,7 @@ app.post("/verify-code", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code expired. Request a new one." });
     }
 
-    if (String(resetData.code) !== code) {
+    if (resetData.code !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
@@ -555,12 +548,13 @@ app.post("/verify-code", async (req, res) => {
 
 /* ---------------- RESET PASSWORD ---------------- */
 app.post("/reset-password", async (req, res) => {
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const { password, token } = req.body;
+    let { email, password, token } = req.body;
 
     if (!email || !password || !token) {
         return res.status(400).json({ success: false, message: "Missing required fields." });
     }
+
+    email = email.trim().toLowerCase();
 
     try {
         const session = inMemoryTokens[email];
@@ -602,8 +596,7 @@ app.post("/reset-password", async (req, res) => {
 
 /* ---------------- WITHDRAW ---------------- */
 app.post("/withdraw/send-code", async (req, res) => {
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const { user_id } = req.body;
+    const { email, user_id } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -663,11 +656,9 @@ app.post("/withdraw/send-code", async (req, res) => {
 });
 
 app.post("/withdraw/create", async (req, res) => {
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const { user_id, code, method, wallet_address, amount } = req.body;
-    const cleanCode = String(code || "").trim();
+    const { user_id, email, code, method, wallet_address, amount } = req.body;
 
-    if (!user_id || !email || !cleanCode || !method || !wallet_address || !amount) {
+    if (!user_id || !email || !code || !method || !wallet_address || !amount) {
         return res.status(400).json({ success: false, message: "All fields are required." });
     }
 
@@ -705,7 +696,7 @@ app.post("/withdraw/create", async (req, res) => {
         .from("password_resets")
         .select("*")
         .eq("email", email)
-        .maybeSingle();
+        .single();
 
     if (codeErr || !resetData) {
         return res.status(401).json({ success: false, message: "Verification code not found." });
@@ -716,7 +707,7 @@ app.post("/withdraw/create", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code expired." });
     }
 
-    if (String(resetData.code) !== cleanCode) {
+    if (resetData.code !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
