@@ -245,7 +245,6 @@ app.post("/signup/send-code", async (req, res) => {
 app.post("/signup/verify", async (req, res) => {
     const { email, code } = req.body;
 
-    // 1. Fetch reset code
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
@@ -265,26 +264,21 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    // 2. THIS IS THE FIX: Use .select() to verify the update actually hit a row
-    const { data: updatedRows, error: updateError } = await supabase
+    const { error: updateError } = await supabase
         .from("users")
         .update({ email_verified: true })
-        .eq("email", email)
-        .select("id, full_name, email, email_verified"); // Add this!
+        .eq("email", email);
 
     if (updateError) {
         return res.status(500).json({ success: false, message: "Failed to verify email." });
     }
 
-    // 3. If no rows were returned, the update missed the user
-    if (!updatedRows || updatedRows.length === 0) {
-        console.error("❌ Update matched 0 rows for email:", email);
-        return res.status(500).json({ success: false, message: "User not found. Please check your email casing." });
-    }
+    const { data: verifiedUser } = await supabase
+        .from("users")
+        .select("full_name")
+        .eq("email", email)
+        .single();
 
-    const verifiedUser = updatedRows[0];
-
-    // 4. Send welcome email and return success
     await sendWelcomeEmail({
         to: email,
         fullName: verifiedUser?.full_name
@@ -295,10 +289,17 @@ app.post("/signup/verify", async (req, res) => {
 
     await supabase
         .from("password_resets")
-        .update({ token: resetToken, token_expires_at: tokenExpiresAt })
+        .update({ 
+            token: resetToken,
+            token_expires_at: tokenExpiresAt 
+        })
         .eq("email", email);
 
-    res.json({ success: true, message: "Email verified successfully.", reset_token: resetToken });
+    res.json({ 
+        success: true, 
+        message: "Email verified successfully.",
+        reset_token: resetToken
+    });
 });
 
 /* ---------------- SIGNUP (DIRECT) ---------------- */
