@@ -41,6 +41,11 @@ function cleanNumber(v) {
     return isNaN(n) ? v : n;
 }
 
+// 🆕 Normalizes emails so case/whitespace never breaks lookups
+function normalizeEmail(e) {
+    return String(e || "").trim().toLowerCase();
+}
+
 /* ---------------- EMAIL TEMPLATES ---------------- */
 async function sendWelcomeEmail({ to, fullName }) {
     const firstName = (fullName || "there").trim().split(" ")[0];
@@ -169,9 +174,10 @@ app.get("/test", async (req, res) => {
     res.json({ success: true, data });
 });
 
-/* ---------------- SIGNUP: SEND CODE ---------------- */
+/* ---------------- SIGNUP: SEND CODE (FIXED) ---------------- */
 app.post("/signup/send-code", async (req, res) => {
-    const { fullName, phone, country, email, password, referred_by, language, currency } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { fullName, phone, country, password, referred_by, language, currency } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -181,7 +187,7 @@ app.post("/signup/send-code", async (req, res) => {
         .from("users")
         .select("id")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
     if (existingUser) {
         return res.json({ success: false, message: "Email already exists." });
@@ -189,11 +195,11 @@ app.post("/signup/send-code", async (req, res) => {
 
     const { error: dbError } = await supabase
         .from("users")
-        .insert([{ 
-            full_name: fullName, 
-            phone, 
-            country, 
-            email, 
+        .insert([{
+            full_name: fullName,
+            phone,
+            country,
+            email,
             password,
             is_verified: false,
             email_verified: false,
@@ -209,10 +215,10 @@ app.post("/signup/send-code", async (req, res) => {
 
     const code = crypto.randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + CODE_EXPIRY).toISOString();
-    
-    await supabase.from("password_resets").upsert([{ 
-        email: email, 
-        code: code, 
+
+    await supabase.from("password_resets").upsert([{
+        email: email,
+        code: code,
         expires_at: expiresAt
     }], { onConflict: 'email' });
 
@@ -241,15 +247,20 @@ app.post("/signup/send-code", async (req, res) => {
     }
 });
 
-/* ---------------- SIGNUP: VERIFY ---------------- */
+/* ---------------- SIGNUP: VERIFY (FIXED) ---------------- */
 app.post("/signup/verify", async (req, res) => {
-    const { email, code } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const code = String(req.body.code || "").trim();
+
+    if (!email || !code) {
+        return res.status(400).json({ success: false, message: "Email and code are required." });
+    }
 
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
     if (error || !resetData) {
         return res.status(401).json({ success: false, message: "Verification code not found or expired." });
@@ -260,24 +271,36 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code has expired." });
     }
 
-    if (resetData.code !== code) {
+    if (String(resetData.code) !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    const { error: updateError } = await supabase
+    // 🔑 THE FIX: .select() proves the update hit a row
+    const { data: updatedRows, error: updateError } = await supabase
         .from("users")
         .update({ email_verified: true })
-        .eq("email", email);
+        .eq("email", email)
+        .select("id, full_name, email, email_verified");
 
     if (updateError) {
-        return res.status(500).json({ success: false, message: "Failed to verify email." });
+        console.error("❌ VERIFY UPDATE ERROR:", updateError);
+        return res.status(500).json({ success: false, message: "Failed to verify email: " + updateError.message });
     }
 
-    const { data: verifiedUser } = await supabase
-        .from("users")
-        .select("full_name")
-        .eq("email", email)
-        .single();
+    if (!updatedRows || updatedRows.length === 0) {
+        console.error("❌ VERIFY UPDATE matched 0 rows for:", email);
+        return res.status(500).json({
+            success: false,
+            message: "No user found with that email. Please contact support."
+        });
+    }
+
+    if (updatedRows[0].email_verified !== true) {
+        console.error("❌ email_verified did not persist:", updatedRows[0]);
+        return res.status(500).json({ success: false, message: "Verification did not persist. Please contact support." });
+    }
+
+    const verifiedUser = updatedRows[0];
 
     await sendWelcomeEmail({
         to: email,
@@ -289,22 +312,23 @@ app.post("/signup/verify", async (req, res) => {
 
     await supabase
         .from("password_resets")
-        .update({ 
+        .update({
             token: resetToken,
-            token_expires_at: tokenExpiresAt 
+            token_expires_at: tokenExpiresAt
         })
         .eq("email", email);
 
-    res.json({ 
-        success: true, 
+    res.json({
+        success: true,
         message: "Email verified successfully.",
         reset_token: resetToken
     });
 });
 
-/* ---------------- SIGNUP (DIRECT) ---------------- */
+/* ---------------- SIGNUP (DIRECT) (FIXED) ---------------- */
 app.post("/signup", async (req, res) => {
-    const { fullName, phone, country, email, password, language, currency } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { fullName, phone, country, password, language, currency } = req.body;
 
     if (!fullName || !phone || !country || !email || !password) {
         return res.status(400).json({ success: false, message: "All fields are required." });
@@ -314,7 +338,7 @@ app.post("/signup", async (req, res) => {
         .from("users")
         .select("id")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
     if (existingUser) {
         return res.status(400).json({ success: false, message: "Email already exists." });
@@ -322,17 +346,17 @@ app.post("/signup", async (req, res) => {
 
     const { data, error } = await supabase
         .from("users")
-        .insert([{ 
-            full_name: fullName, 
-            phone, 
-            country, 
-            email, 
-            password, 
+        .insert([{
+            full_name: fullName,
+            phone,
+            country,
+            email,
+            password,
             is_verified: false,
             email_verified: true,
             language: language || 'en',
             currency: currency || 'USD'
-        }]) 
+        }])
         .select();
 
     if (error) {
@@ -344,9 +368,10 @@ app.post("/signup", async (req, res) => {
     res.json({ success: true, message: "Account created.", user: data });
 });
 
-/* ---------------- LOGIN ---------------- */
+/* ---------------- LOGIN (FIXED) ---------------- */
 app.post("/login", async (req, res) => {
-    const { email, password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || "");
 
     if (!email || !password) {
         return res.status(400).json({ success: false, message: "Email and password required." });
@@ -357,13 +382,14 @@ app.post("/login", async (req, res) => {
         .select("*")
         .eq("email", email)
         .eq("password", password)
-        .single();
+        .maybeSingle();
 
     if (error || !data) {
         return res.status(401).json({ success: false, message: "Invalid email or password." });
     }
 
-    if (data.email_verified === false) {
+    // 🔑 Strict check — blocks false, null, undefined, missing
+    if (data.email_verified !== true) {
         return res.status(403).json({ success: false, message: "Please verify your email address before logging in." });
     }
 
@@ -437,9 +463,9 @@ app.get("/user/:id", async (req, res) => {
     });
 });
 
-/* ---------------- FORGOT PASSWORD ---------------- */
+/* ---------------- FORGOT PASSWORD (FIXED) ---------------- */
 app.post("/forgot-password", async (req, res) => {
-    const { email } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Please enter your email address." });
@@ -449,20 +475,20 @@ app.post("/forgot-password", async (req, res) => {
         .from("users")
         .select("id,email")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
     if (error || !user) {
         return res.json({ success: false, message: "No account was found with that email address." });
     }
 
     const code = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = new Date(Date.now() + CODE_EXPIRY).toISOString(); 
+    const expiresAt = new Date(Date.now() + CODE_EXPIRY).toISOString();
 
     const { error: dbError } = await supabase
         .from("password_resets")
-        .upsert([{ 
-            email: email, 
-            code: code, 
+        .upsert([{
+            email: email,
+            code: code,
             expires_at: expiresAt
         }], { onConflict: 'email' });
 
@@ -496,21 +522,21 @@ app.post("/forgot-password", async (req, res) => {
     }
 });
 
-/* ---------------- VERIFY CODE ---------------- */
+/* ---------------- VERIFY CODE (FIXED) ---------------- */
 app.post("/verify-code", async (req, res) => {
     let { email, code } = req.body;
+    email = normalizeEmail(email);
+    code = String(code || "").trim();
 
     if (!email || !code) {
         return res.status(400).json({ success: false, message: "Email and code are required." });
     }
 
-    email = email.trim().toLowerCase();
-
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
     if (error || !resetData) {
         return res.status(401).json({ success: false, message: "No reset request found for this email." });
@@ -521,12 +547,12 @@ app.post("/verify-code", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code expired. Request a new one." });
     }
 
-    if (resetData.code !== code) {
+    if (String(resetData.code) !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
     const resetToken = crypto.randomBytes(32).toString('hex');
-    
+
     inMemoryTokens[email] = {
         token: resetToken,
         expires: Date.now() + 15 * 60 * 1000
@@ -534,28 +560,27 @@ app.post("/verify-code", async (req, res) => {
 
     await supabase
         .from("password_resets")
-        .update({ 
+        .update({
             token: resetToken,
             token_expires_at: new Date(inMemoryTokens[email].expires).toISOString()
         })
         .eq("email", email);
 
-    res.json({ 
-        success: true, 
+    res.json({
+        success: true,
         message: "Verification successful.",
         reset_token: resetToken
     });
 });
 
-/* ---------------- RESET PASSWORD ---------------- */
+/* ---------------- RESET PASSWORD (FIXED) ---------------- */
 app.post("/reset-password", async (req, res) => {
     let { email, password, token } = req.body;
+    email = normalizeEmail(email);
 
     if (!email || !password || !token) {
         return res.status(400).json({ success: false, message: "Missing required fields." });
     }
-
-    email = email.trim().toLowerCase();
 
     try {
         const session = inMemoryTokens[email];
@@ -575,13 +600,17 @@ app.post("/reset-password", async (req, res) => {
             return res.status(403).json({ success: false, message: "Session expired. Please request a new code." });
         }
 
-        const { error: updateError } = await supabase
+        const { data: updatedRows, error: updateError } = await supabase
             .from("users")
             .update({ password: password })
-            .eq("email", email);
+            .eq("email", email)
+            .select("id");
 
         if (updateError) {
             return res.status(500).json({ success: false, message: updateError.message });
+        }
+        if (!updatedRows || updatedRows.length === 0) {
+            return res.status(404).json({ success: false, message: "User not found." });
         }
 
         delete inMemoryTokens[email];
@@ -595,9 +624,10 @@ app.post("/reset-password", async (req, res) => {
     }
 });
 
-/* ---------------- WITHDRAW ---------------- */
+/* ---------------- WITHDRAW (FIXED) ---------------- */
 app.post("/withdraw/send-code", async (req, res) => {
-    const { email, user_id } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { user_id } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -615,19 +645,19 @@ app.post("/withdraw/send-code", async (req, res) => {
         }
 
         if (user.is_verified === false) {
-            return res.status(403).json({ 
-                success: false, 
-                message: "Please complete your KYC verification before requesting a withdrawal." 
+            return res.status(403).json({
+                success: false,
+                message: "Please complete your KYC verification before requesting a withdrawal."
             });
         }
     }
 
     const code = crypto.randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + CODE_EXPIRY).toISOString();
-    
-    await supabase.from("password_resets").upsert([{ 
-        email: email, 
-        code: code, 
+
+    await supabase.from("password_resets").upsert([{
+        email: email,
+        code: code,
         expires_at: expiresAt
     }], { onConflict: 'email' });
 
@@ -657,9 +687,11 @@ app.post("/withdraw/send-code", async (req, res) => {
 });
 
 app.post("/withdraw/create", async (req, res) => {
-    const { user_id, email, code, method, wallet_address, amount } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { user_id, code, method, wallet_address, amount } = req.body;
+    const cleanCode = String(code || "").trim();
 
-    if (!user_id || !email || !code || !method || !wallet_address || !amount) {
+    if (!user_id || !email || !cleanCode || !method || !wallet_address || !amount) {
         return res.status(400).json({ success: false, message: "All fields are required." });
     }
 
@@ -679,9 +711,9 @@ app.post("/withdraw/create", async (req, res) => {
     }
 
     if (userCheck.is_verified === false) {
-        return res.status(403).json({ 
-            success: false, 
-            message: "Please complete your KYC verification before requesting a withdrawal." 
+        return res.status(403).json({
+            success: false,
+            message: "Please complete your KYC verification before requesting a withdrawal."
         });
     }
 
@@ -697,7 +729,7 @@ app.post("/withdraw/create", async (req, res) => {
         .from("password_resets")
         .select("*")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
     if (codeErr || !resetData) {
         return res.status(401).json({ success: false, message: "Verification code not found." });
@@ -708,7 +740,7 @@ app.post("/withdraw/create", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code expired." });
     }
 
-    if (resetData.code !== code) {
+    if (String(resetData.code) !== cleanCode) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
