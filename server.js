@@ -41,11 +41,6 @@ function cleanNumber(v) {
     return isNaN(n) ? v : n;
 }
 
-// ✅ NEW: normalize email helper — used everywhere email is a key
-function normalizeEmail(v) {
-    return String(v || "").trim().toLowerCase();
-}
-
 /* ---------------- EMAIL TEMPLATES ---------------- */
 async function sendWelcomeEmail({ to, fullName }) {
     const firstName = (fullName || "there").trim().split(" ")[0];
@@ -176,10 +171,7 @@ app.get("/test", async (req, res) => {
 
 /* ---------------- SIGNUP: SEND CODE ---------------- */
 app.post("/signup/send-code", async (req, res) => {
-    const { fullName, phone, country, password, referred_by, language, currency } = req.body;
-
-    // ✅ FIX: normalize email up front
-    const email = normalizeEmail(req.body.email);
+    const { fullName, phone, country, email, password, referred_by, language, currency } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -251,12 +243,7 @@ app.post("/signup/send-code", async (req, res) => {
 
 /* ---------------- SIGNUP: VERIFY ---------------- */
 app.post("/signup/verify", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
-    const code = String(req.body.code || "").trim();
-
-    if (!email || !code) {
-        return res.status(400).json({ success: false, message: "Email and code are required." });
-    }
+    const { email, code } = req.body;
 
     const { data: resetData, error } = await supabase
         .from("password_resets")
@@ -273,48 +260,28 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code has expired." });
     }
 
-    if (String(resetData.code) !== code) {
+    if (resetData.code !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    // ✅ FIX: verify user exists before attempting update
-    const { data: existingUser, error: userErr } = await supabase
+    const { error: updateError } = await supabase
         .from("users")
-        .select("id, full_name, email_verified")
+        .update({ email_verified: true })
+        .eq("email", email);
+
+    if (updateError) {
+        return res.status(500).json({ success: false, message: "Failed to verify email." });
+    }
+
+    const { data: verifiedUser } = await supabase
+        .from("users")
+        .select("full_name")
         .eq("email", email)
         .single();
 
-    if (userErr || !existingUser) {
-        console.error("❌ Verify: no user row for email:", email);
-        return res.status(404).json({
-            success: false,
-            message: "No account found for this email. Please sign up again."
-        });
-    }
-
-    // ✅ FIX: use .select() to confirm rows were actually updated
-    const { data: updatedRows, error: updateError } = await supabase
-        .from("users")
-        .update({ email_verified: true })
-        .eq("email", email)
-        .select("id, email_verified");
-
-    if (updateError) {
-        console.error("❌ Verify: update error:", updateError);
-        return res.status(500).json({ success: false, message: "Failed to verify email: " + updateError.message });
-    }
-
-    if (!updatedRows || updatedRows.length === 0) {
-        console.error("❌ Verify: 0 rows updated for email:", email);
-        return res.status(500).json({
-            success: false,
-            message: "Email verification did not persist. Please contact support."
-        });
-    }
-
     await sendWelcomeEmail({
         to: email,
-        fullName: existingUser.full_name
+        fullName: verifiedUser?.full_name
     });
 
     const resetToken = crypto.randomBytes(32).toString('hex');
@@ -331,21 +298,13 @@ app.post("/signup/verify", async (req, res) => {
     res.json({ 
         success: true, 
         message: "Email verified successfully.",
-        reset_token: resetToken,
-        // ✅ Return user so frontend can persist without a second /login call
-        user: {
-            id: existingUser.id,
-            email,
-            full_name: existingUser.full_name,
-            email_verified: true
-        }
+        reset_token: resetToken
     });
 });
 
 /* ---------------- SIGNUP (DIRECT) ---------------- */
 app.post("/signup", async (req, res) => {
-    const { fullName, phone, country, password, language, currency } = req.body;
-    const email = normalizeEmail(req.body.email);
+    const { fullName, phone, country, email, password, language, currency } = req.body;
 
     if (!fullName || !phone || !country || !email || !password) {
         return res.status(400).json({ success: false, message: "All fields are required." });
@@ -387,8 +346,7 @@ app.post("/signup", async (req, res) => {
 
 /* ---------------- LOGIN ---------------- */
 app.post("/login", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
-    const { password } = req.body;
+    const { email, password } = req.body;
 
     if (!email || !password) {
         return res.status(400).json({ success: false, message: "Email and password required." });
@@ -481,7 +439,7 @@ app.get("/user/:id", async (req, res) => {
 
 /* ---------------- FORGOT PASSWORD ---------------- */
 app.post("/forgot-password", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
+    const { email } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Please enter your email address." });
@@ -538,14 +496,15 @@ app.post("/forgot-password", async (req, res) => {
     }
 });
 
-/* ---------------- VERIFY CODE (password reset) ---------------- */
+/* ---------------- VERIFY CODE ---------------- */
 app.post("/verify-code", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
-    const code = String(req.body.code || "").trim();
+    let { email, code } = req.body;
 
     if (!email || !code) {
         return res.status(400).json({ success: false, message: "Email and code are required." });
     }
+
+    email = email.trim().toLowerCase();
 
     const { data: resetData, error } = await supabase
         .from("password_resets")
@@ -562,7 +521,7 @@ app.post("/verify-code", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code expired. Request a new one." });
     }
 
-    if (String(resetData.code) !== code) {
+    if (resetData.code !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
@@ -590,13 +549,13 @@ app.post("/verify-code", async (req, res) => {
 
 /* ---------------- RESET PASSWORD ---------------- */
 app.post("/reset-password", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
-    const { password } = req.body;
-    const token = String(req.body.token || "").trim();
+    let { email, password, token } = req.body;
 
     if (!email || !password || !token) {
         return res.status(400).json({ success: false, message: "Missing required fields." });
     }
+
+    email = email.trim().toLowerCase();
 
     try {
         const session = inMemoryTokens[email];
@@ -638,8 +597,7 @@ app.post("/reset-password", async (req, res) => {
 
 /* ---------------- WITHDRAW ---------------- */
 app.post("/withdraw/send-code", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
-    const { user_id } = req.body;
+    const { email, user_id } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -699,9 +657,7 @@ app.post("/withdraw/send-code", async (req, res) => {
 });
 
 app.post("/withdraw/create", async (req, res) => {
-    const email = normalizeEmail(req.body.email);
-    const { user_id, method, wallet_address, amount } = req.body;
-    const code = String(req.body.code || "").trim();
+    const { user_id, email, code, method, wallet_address, amount } = req.body;
 
     if (!user_id || !email || !code || !method || !wallet_address || !amount) {
         return res.status(400).json({ success: false, message: "All fields are required." });
@@ -752,7 +708,7 @@ app.post("/withdraw/create", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code expired." });
     }
 
-    if (String(resetData.code) !== code) {
+    if (resetData.code !== code) {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
