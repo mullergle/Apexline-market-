@@ -266,10 +266,15 @@ app.post("/signup/verify", async (req, res) => {
 
     const { error: updateError } = await supabase
         .from("users")
-        .update({ email_verified: true })
-        .eq("email", email);
+        .update({ 
+            email_verified: true,
+            is_verified: true 
+        })
+        .eq("email", email)
+        .select(); // Added .select() to ensure it returns data and actually hits the DB
 
     if (updateError) {
+        console.error("Verify Update Error:", updateError);
         return res.status(500).json({ success: false, message: "Failed to verify email." });
     }
 
