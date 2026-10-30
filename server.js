@@ -245,8 +245,6 @@ app.post("/signup/send-code", async (req, res) => {
 app.post("/signup/verify", async (req, res) => {
     const { email, code } = req.body;
 
-    console.log("👉 1. RENDER RECEIVED VERIFY REQUEST:", { email, code });
-
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
@@ -254,44 +252,32 @@ app.post("/signup/verify", async (req, res) => {
         .single();
 
     if (error || !resetData) {
-        console.log("❌ 2. FAILED: CODE NOT FOUND IN DB");
         return res.status(401).json({ success: false, message: "Verification code not found or expired." });
     }
 
     if (new Date() > new Date(resetData.expires_at)) {
         await supabase.from("password_resets").delete().eq("email", email);
-        console.log("❌ 2b. FAILED: CODE EXPIRED");
         return res.status(401).json({ success: false, message: "Verification code has expired." });
     }
 
     if (resetData.code !== code) {
-        console.log("❌ 3. FAILED: CODE MISMATCH");
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    console.log("✅ 4. CODE MATCHED! UPDATING USER NOW...");
-
-    const { data: updatedUser, error: updateError } = await supabase
+    const { error: updateError } = await supabase
         .from("users")
         .update({ email_verified: true })
-        .eq("email", email)
-        .select();
-
-    console.log("👉 5. DATABASE UPDATE RESULT:", updatedUser);
+        .eq("email", email);
 
     if (updateError) {
-        console.log("❌ 6. DATABASE ERROR:", updateError);
         return res.status(500).json({ success: false, message: "Failed to verify email." });
     }
 
-    if (!updatedUser || updatedUser.length === 0) {
-        console.log("❌ 7. UPDATE FAILED: USER NOT FOUND IN USERS TABLE");
-        return res.status(404).json({ success: false, message: "User not found for this email." });
-    }
-
-    console.log("🎉 8. SUCCESS! EMAIL VERIFIED IN DB.");
-
-    const verifiedUser = updatedUser[0];
+    const { data: verifiedUser } = await supabase
+        .from("users")
+        .select("full_name")
+        .eq("email", email)
+        .single();
 
     await sendWelcomeEmail({
         to: email,
