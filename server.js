@@ -171,10 +171,7 @@ app.get("/test", async (req, res) => {
 
 /* ---------------- SIGNUP: SEND CODE ---------------- */
 app.post("/signup/send-code", async (req, res) => {
-    let { fullName, phone, country, email, password, referred_by, language, currency } = req.body;
-
-    // ✅ FIXED: normalize email before any DB operation
-    email = (email || "").trim().toLowerCase();
+    const { fullName, phone, country, email, password, referred_by, language, currency } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -196,7 +193,7 @@ app.post("/signup/send-code", async (req, res) => {
             full_name: fullName, 
             phone, 
             country, 
-            email,                     // ✅ normalized
+            email, 
             password,
             is_verified: false,
             email_verified: false,
@@ -246,10 +243,7 @@ app.post("/signup/send-code", async (req, res) => {
 
 /* ---------------- SIGNUP: VERIFY ---------------- */
 app.post("/signup/verify", async (req, res) => {
-    let { email, code } = req.body;
-
-    // ✅ FIXED: normalize email
-    email = (email || "").trim().toLowerCase();
+    const { email, code } = req.body;
 
     const { data: resetData, error } = await supabase
         .from("password_resets")
@@ -270,24 +264,20 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    // ✅ FIXED: detect 0-row updates instead of lying about success
-    const { data: updated, error: updateError } = await supabase
+    const { error: updateError } = await supabase
         .from("users")
         .update({ email_verified: true })
-        .eq("email", email)
-        .select();
+        .eq("email", email);
 
     if (updateError) {
-        console.error("❌ VERIFY UPDATE ERROR:", updateError);
         return res.status(500).json({ success: false, message: "Failed to verify email." });
     }
 
-    if (!updated || updated.length === 0) {
-        console.error("❌ VERIFY: no user matched for email:", email);
-        return res.status(404).json({ success: false, message: "User not found for this email." });
-    }
-
-    const verifiedUser = updated[0];
+    const { data: verifiedUser } = await supabase
+        .from("users")
+        .select("full_name")
+        .eq("email", email)
+        .single();
 
     await sendWelcomeEmail({
         to: email,
@@ -314,10 +304,7 @@ app.post("/signup/verify", async (req, res) => {
 
 /* ---------------- SIGNUP (DIRECT) ---------------- */
 app.post("/signup", async (req, res) => {
-    let { fullName, phone, country, email, password, language, currency } = req.body;
-
-    // ✅ FIXED: normalize email here too
-    email = (email || "").trim().toLowerCase();
+    const { fullName, phone, country, email, password, language, currency } = req.body;
 
     if (!fullName || !phone || !country || !email || !password) {
         return res.status(400).json({ success: false, message: "All fields are required." });
@@ -339,7 +326,7 @@ app.post("/signup", async (req, res) => {
             full_name: fullName, 
             phone, 
             country, 
-            email,                     // ✅ normalized
+            email, 
             password, 
             is_verified: false,
             email_verified: true,
@@ -359,10 +346,7 @@ app.post("/signup", async (req, res) => {
 
 /* ---------------- LOGIN ---------------- */
 app.post("/login", async (req, res) => {
-    let { email, password } = req.body;
-
-    // ✅ FIXED: normalize email so it always matches what signup stored
-    email = (email || "").trim().toLowerCase();
+    const { email, password } = req.body;
 
     if (!email || !password) {
         return res.status(400).json({ success: false, message: "Email and password required." });
@@ -455,10 +439,7 @@ app.get("/user/:id", async (req, res) => {
 
 /* ---------------- FORGOT PASSWORD ---------------- */
 app.post("/forgot-password", async (req, res) => {
-    let { email } = req.body;
-
-    // ✅ FIXED: normalize
-    email = (email || "").trim().toLowerCase();
+    const { email } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Please enter your email address." });
@@ -616,10 +597,7 @@ app.post("/reset-password", async (req, res) => {
 
 /* ---------------- WITHDRAW ---------------- */
 app.post("/withdraw/send-code", async (req, res) => {
-    let { email, user_id } = req.body;
-
-    // ✅ FIXED: normalize
-    email = (email || "").trim().toLowerCase();
+    const { email, user_id } = req.body;
 
     if (!email) {
         return res.status(400).json({ success: false, message: "Email is required." });
@@ -679,10 +657,7 @@ app.post("/withdraw/send-code", async (req, res) => {
 });
 
 app.post("/withdraw/create", async (req, res) => {
-    let { user_id, email, code, method, wallet_address, amount } = req.body;
-
-    // ✅ FIXED: normalize
-    email = (email || "").trim().toLowerCase();
+    const { user_id, email, code, method, wallet_address, amount } = req.body;
 
     if (!user_id || !email || !code || !method || !wallet_address || !amount) {
         return res.status(400).json({ success: false, message: "All fields are required." });
