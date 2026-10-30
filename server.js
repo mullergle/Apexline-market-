@@ -177,41 +177,73 @@ app.post("/signup/send-code", async (req, res) => {
         return res.status(400).json({ success: false, message: "Email is required." });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check for existing user
     const { data: existingUser } = await supabase
         .from("users")
-        .select("id")
-        .eq("email", email)
+        .select("id, email_verified, is_verified")
+        .eq("email", normalizedEmail)
         .single();
 
     if (existingUser) {
-        return res.json({ success: false, message: "Email already exists." });
+        // ✅ Only block if the email was actually verified
+        if (existingUser.email_verified === true) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Email already exists and is verified. Please log in instead." 
+            });
+        }
+
+        // Unverified account exists → update it with fresh signup data
+        const { error: updateError } = await supabase
+            .from("users")
+            .update({
+                full_name: fullName,
+                phone,
+                country,
+                password,
+                referred_by: referred_by || null,
+                language: language || 'en',
+                currency: currency || 'USD',
+                email_verified: false,
+                is_verified: false  // reset KYC too — they never verified
+            })
+            .eq("id", existingUser.id);
+
+        if (updateError) {
+            console.error("❌ DB UPDATE ERROR:", updateError);
+            return res.status(500).json({ success: false, message: "Database error: " + updateError.message });
+        }
+    } else {
+        // New user
+        const { error: dbError } = await supabase
+            .from("users")
+            .insert([{ 
+                full_name: fullName, 
+                phone, 
+                country, 
+                email: normalizedEmail, 
+                password,
+                is_verified: false,
+                email_verified: false,
+                referred_by: referred_by || null,
+                language: language || 'en',
+                currency: currency || 'USD'
+            }]);
+
+        if (dbError) {
+            console.error("❌ DB INSERT ERROR:", dbError);
+            return res.status(500).json({ success: false, message: "Database error: " + dbError.message });
+        }
     }
 
-    const { error: dbError } = await supabase
-        .from("users")
-        .insert([{ 
-            full_name: fullName, 
-            phone, 
-            country, 
-            email, 
-            password,
-            is_verified: false,
-            email_verified: false,
-            referred_by: referred_by || null,
-            language: language || 'en',
-            currency: currency || 'USD'
-        }]);
-
-    if (dbError) {
-        console.error("❌ DB INSERT ERROR:", dbError);
-        return res.status(500).json({ success: false, message: "Database error: " + dbError.message });
-    }
-
+    // Generate + send code (unchanged)
     const code = crypto.randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + CODE_EXPIRY).toISOString();
     
     await supabase.from("password_resets").upsert([{ 
-        email: email, 
+        email: normalizedEmail, 
         code: code, 
         expires_at: expiresAt
     }], { onConflict: 'email' });
@@ -219,7 +251,7 @@ app.post("/signup/send-code", async (req, res) => {
     try {
         const { data, error } = await resend.emails.send({
             from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
-            to: email,
+            to: normalizedEmail,
             subject: "Verify your Nexora Trade Markets account",
             html: `
                 <h2>Welcome to Nexora Trade Markets</h2>
@@ -245,10 +277,16 @@ app.post("/signup/send-code", async (req, res) => {
 app.post("/signup/verify", async (req, res) => {
     const { email, code } = req.body;
 
+    if (!email || !code) {
+        return res.status(400).json({ success: false, message: "Email and code are required." });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
     const { data: resetData, error } = await supabase
         .from("password_resets")
         .select("*")
-        .eq("email", email)
+        .eq("email", normalizedEmail)
         .single();
 
     if (error || !resetData) {
@@ -256,7 +294,7 @@ app.post("/signup/verify", async (req, res) => {
     }
 
     if (new Date() > new Date(resetData.expires_at)) {
-        await supabase.from("password_resets").delete().eq("email", email);
+        await supabase.from("password_resets").delete().eq("email", normalizedEmail);
         return res.status(401).json({ success: false, message: "Verification code has expired." });
     }
 
@@ -264,31 +302,26 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    const { error: updateError } = await supabase
+    // ✅ Only set email_verified. is_verified stays false until KYC is approved.
+    const { data: updatedRows, error: updateError } = await supabase
         .from("users")
-        .update({ 
-            email_verified: true,
-            is_verified: true 
-        })
-        .eq("email", email)
-        .select(); // Added .select() to ensure it returns data and actually hits the DB
+        .update({ email_verified: true })
+        .eq("email", normalizedEmail)
+        .select();
 
-    if (updateError) {
+    if (updateError || !updatedRows || updatedRows.length === 0) {
         console.error("Verify Update Error:", updateError);
         return res.status(500).json({ success: false, message: "Failed to verify email." });
     }
 
-    const { data: verifiedUser } = await supabase
-        .from("users")
-        .select("full_name")
-        .eq("email", email)
-        .single();
+    const verifiedUser = updatedRows[0];
 
     await sendWelcomeEmail({
-        to: email,
+        to: normalizedEmail,
         fullName: verifiedUser?.full_name
     });
 
+    // Issue reset/onboarding token
     const resetToken = crypto.randomBytes(32).toString('hex');
     const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
@@ -298,7 +331,7 @@ app.post("/signup/verify", async (req, res) => {
             token: resetToken,
             token_expires_at: tokenExpiresAt 
         })
-        .eq("email", email);
+        .eq("email", normalizedEmail);
 
     res.json({ 
         success: true, 
@@ -315,14 +348,37 @@ app.post("/signup", async (req, res) => {
         return res.status(400).json({ success: false, message: "All fields are required." });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+
     const { data: existingUser } = await supabase
         .from("users")
-        .select("id")
-        .eq("email", email)
+        .select("id, email_verified")
+        .eq("email", normalizedEmail)
         .single();
 
-    if (existingUser) {
+    if (existingUser && existingUser.email_verified === true) {
         return res.status(400).json({ success: false, message: "Email already exists." });
+    }
+
+    // If unverified row exists, we still let it through (upsert-style)
+    if (existingUser) {
+        const { data, error } = await supabase
+            .from("users")
+            .update({
+                full_name: fullName,
+                phone,
+                country,
+                password,
+                email_verified: true,
+                language: language || 'en',
+                currency: currency || 'USD'
+            })
+            .eq("id", existingUser.id)
+            .select();
+
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        await sendWelcomeEmail({ to: normalizedEmail, fullName });
+        return res.json({ success: true, message: "Account created.", user: data });
     }
 
     const { data, error } = await supabase
@@ -331,10 +387,10 @@ app.post("/signup", async (req, res) => {
             full_name: fullName, 
             phone, 
             country, 
-            email, 
+            email: normalizedEmail, 
             password, 
-            is_verified: false,
-            email_verified: true,
+            is_verified: false,   // ✅ KYC not done
+            email_verified: true, // ✅ email verified via direct signup
             language: language || 'en',
             currency: currency || 'USD'
         }]) 
@@ -344,7 +400,7 @@ app.post("/signup", async (req, res) => {
         return res.status(500).json({ success: false, message: error.message });
     }
 
-    await sendWelcomeEmail({ to: email, fullName });
+    await sendWelcomeEmail({ to: normalizedEmail, fullName });
 
     res.json({ success: true, message: "Account created.", user: data });
 });
