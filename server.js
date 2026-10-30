@@ -242,7 +242,6 @@ app.post("/signup/send-code", async (req, res) => {
 });
 
 /* ---------------- SIGNUP: VERIFY ---------------- */
-/* ---------------- SIGNUP: VERIFY ---------------- */
 app.post("/signup/verify", async (req, res) => {
     const { email, code } = req.body;
 
@@ -259,6 +258,12 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Verification code not found or expired." });
     }
 
+    if (new Date() > new Date(resetData.expires_at)) {
+        await supabase.from("password_resets").delete().eq("email", email);
+        console.log("❌ 2b. FAILED: CODE EXPIRED");
+        return res.status(401).json({ success: false, message: "Verification code has expired." });
+    }
+
     if (resetData.code !== code) {
         console.log("❌ 3. FAILED: CODE MISMATCH");
         return res.status(401).json({ success: false, message: "Invalid verification code." });
@@ -270,7 +275,7 @@ app.post("/signup/verify", async (req, res) => {
         .from("users")
         .update({ email_verified: true })
         .eq("email", email)
-        .select(); 
+        .select();
 
     console.log("👉 5. DATABASE UPDATE RESULT:", updatedUser);
 
