@@ -1017,14 +1017,16 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
 
     const fileName = `${Date.now()}-${req.file.originalname}`;
 
+    // UPLOAD TO LOWERCASE 'receipts'
     const { error: uploadError } = await supabase.storage
-    .from("RECEIPTS")
-    .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
+        .from("receipts")
+        .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
 
-if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
+    if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
 
-const { data: publicUrl } = supabase.storage.from("receipts").getPublicUrl(fileName);
-const receipt_url = publicUrl.publicUrl;
+    // GET PUBLIC URL FROM LOWERCASE 'receipts'
+    const { data: publicUrl } = supabase.storage.from("receipts").getPublicUrl(fileName);
+    const receipt_url = publicUrl.publicUrl;
 
     if (!user_id || !amount || !receipt_url) {
         return res.status(400).json({ success: false, message: "All fields are required." });
@@ -1066,7 +1068,6 @@ const receipt_url = publicUrl.publicUrl;
 
     res.json({ success: true, message: "Deposit submitted successfully.", deposit: data });
 });
-
 app.get("/transactions/:userId", async (req, res) => {
     const { data, error } = await supabase
         .from("transactions")
