@@ -1047,7 +1047,9 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
         .select();
 
     if (transactionError) {
-        return res.status(500).json({ success: false, message: "Could not create deposit transaction." });
+        // THIS WILL SHOW US EXACTLY WHY IT FAILED
+        console.error("Supabase Insert Error:", transactionError);
+        return res.status(500).json({ success: false, message: transactionError.message });
     }
 
     const transactionId = txnData && txnData[0] ? txnData[0].id : null;
