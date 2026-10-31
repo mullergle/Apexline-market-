@@ -1468,12 +1468,13 @@ app.post("/kyc", upload.fields([
         const frontFileName = `kyc-${user_id}-${Date.now()}-front.${frontFile.originalname.split('.').pop()}`;
         
         const { error: frontErr } = await supabase.storage
-            .from("kyc_documents")
+            .from("kyc_documents") // Lowercase
             .upload(frontFileName, frontFile.buffer, { contentType: frontFile.mimetype });
 
         if (frontErr) throw new Error("Failed to upload front image: " + frontErr.message);
 
-        const { data: frontUrlData } = supabase.storage.from("KYC_DOCUMENTS").getPublicUrl(frontFileName);
+        // GET PUBLIC URL (FIXED TO LOWERCASE)
+        const { data: frontUrlData } = supabase.storage.from("kyc_documents").getPublicUrl(frontFileName);
 
         // --- BACK IMAGE UPLOAD (IF PROVIDED) ---
         let back_image_url = null;
@@ -1482,12 +1483,12 @@ app.post("/kyc", upload.fields([
             const backFileName = `kyc-${user_id}-${Date.now()}-back.${backFile.originalname.split('.').pop()}`;
             
             const { error: backErr } = await supabase.storage
-                .from("kyc_documents")
+                .from("kyc_documents") // Lowercase
                 .upload(backFileName, backFile.buffer, { contentType: backFile.mimetype });
 
             if (backErr) throw new Error("Failed to upload back image: " + backErr.message);
 
-            const { data: backUrlData } = supabase.storage.from("kyc_documents").getPublicUrl(backFileName);
+            const { data: backUrlData } = supabase.storage.from("kyc_documents").getPublicUrl(backFileName); // Lowercase
             back_image_url = backUrlData.publicUrl;
         }
 
