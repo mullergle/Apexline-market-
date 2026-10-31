@@ -1018,13 +1018,13 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
     const fileName = `${Date.now()}-${req.file.originalname}`;
 
     const { error: uploadError } = await supabase.storage
-        .from("receipts")
-        .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
+    .from("RECEIPTS")
+    .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
 
-    if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
+if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
 
-    const { data: publicUrl } = supabase.storage.from("receipts").getPublicUrl(fileName);
-    const receipt_url = publicUrl.publicUrl;
+const { data: publicUrl } = supabase.storage.from("RECEIPTS").getPublicUrl(fileName);
+const receipt_url = publicUrl.publicUrl;
 
     if (!user_id || !amount || !receipt_url) {
         return res.status(400).json({ success: false, message: "All fields are required." });
