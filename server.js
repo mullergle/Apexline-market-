@@ -1460,23 +1460,35 @@ app.post("/kyc", upload.fields([
             });
         }
 
+        // --- FRONT IMAGE UPLOAD ---
         const frontFile = req.files['front_image'][0];
         const frontFileName = `kyc-${user_id}-${Date.now()}-front.${frontFile.originalname.split('.').pop()}`;
         
         const { error: frontErr } = await supabase.storage
-    .from("KYC_DOCUMENTS")
-    .upload(frontFileName, frontFile.buffer, { contentType: frontFile.mimetype });
+            .from("KYC_DOCUMENTS")
+            .upload(frontFileName, frontFile.buffer, { contentType: frontFile.mimetype });
 
-const { data: frontUrlData } = supabase.storage.from("KYC_DOCUMENTS").getPublicUrl(frontFileName);
+        if (frontErr) throw new Error("Failed to upload front image: " + frontErr.message);
 
-// ...
-const { error: backErr } = await supabase.storage
-    .from("KYC_DOCUMENTS")
-    .upload(backFileName, backFile.buffer, { contentType: backFile.mimetype });
+        const { data: frontUrlData } = supabase.storage.from("KYC_DOCUMENTS").getPublicUrl(frontFileName);
 
-const { data: backUrlData } = supabase.storage.from("KYC_DOCUMENTS").getPublicUrl(backFileName);
+        // --- BACK IMAGE UPLOAD (IF PROVIDED) ---
+        let back_image_url = null;
+        if (req.files && req.files['back_image']) {
+            const backFile = req.files['back_image'][0];
+            const backFileName = `kyc-${user_id}-${Date.now()}-back.${backFile.originalname.split('.').pop()}`;
+            
+            const { error: backErr } = await supabase.storage
+                .from("KYC_DOCUMENTS")
+                .upload(backFileName, backFile.buffer, { contentType: backFile.mimetype });
+
+            if (backErr) throw new Error("Failed to upload back image: " + backErr.message);
+
+            const { data: backUrlData } = supabase.storage.from("KYC_DOCUMENTS").getPublicUrl(backFileName);
+            back_image_url = backUrlData.publicUrl;
         }
 
+        // --- SAVE TO DATABASE ---
         const { data, error } = await supabase
             .from("kyc_requests")
             .insert([{
