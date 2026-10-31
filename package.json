@@ -2,9 +2,9 @@
   "name": "apexline-market-backend",
   "version": "1.0.0",
   "description": "Apexline Market backend API",
-  "main": "Server.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node Server.js"
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
