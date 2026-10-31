@@ -1023,7 +1023,7 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
 
 if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
 
-const { data: publicUrl } = supabase.storage.from("RECEIPTS").getPublicUrl(fileName);
+const { data: publicUrl } = supabase.storage.from("receipts").getPublicUrl(fileName);
 const receipt_url = publicUrl.publicUrl;
 
     if (!user_id || !amount || !receipt_url) {
