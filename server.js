@@ -2105,7 +2105,7 @@ setInterval(async () => {
         console.error("P&L SIMULATION ERROR:", err);
     }
 }, 60 * 60 * 1000);
-/* ================= LIVE TRADES (CoinGecko Version) ================= */
+/* ================= LIVE TRADES (Binance Mirror) ================= */
 const livePrices = Object.create(null);
 
 const PACKAGES = {
@@ -2115,50 +2115,39 @@ const PACKAGES = {
   PLATINUM: { price: 15000, duration_days: null, pair: 'BTC/USD' },
 };
 
-// CoinGecko IDs for the pairs we need
-const COINGECKO_IDS = {
-  'BTC/USD': 'bitcoin',
-  'ETH/USD': 'ethereum',
-  'SOL/USD': 'solana',
-  'BNB/USD': 'binancecoin'
+const BINANCE_SYMBOLS = {
+  'BTC/USD': 'BTCUSDT',
+  'ETH/USD': 'ETHUSDT',
+  'SOL/USD': 'SOLUSDT'
 };
 
 let priceInterval = null;
 
-// Fetch prices from CoinGecko every 10 seconds
+// Fetch prices from Binance's public mirror every 15 seconds
 function startPriceFeed() {
   if (priceInterval) clearInterval(priceInterval);
 
   const fetchPrices = async () => {
     try {
-      // Fetch all needed coins in one request
-      const ids = Object.values(COINGECKO_IDS).join(',');
-      const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
-      
-      if (!response.ok) {
-        throw new Error(`CoinGecko HTTP error: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Map the results back to our pairs
-      for (const [pair, coinId] of Object.entries(COINGECKO_IDS)) {
-        if (data[coinId] && data[coinId].usd) {
-          livePrices[pair] = data[coinId].usd;
+      const promises = Object.entries(BINANCE_SYMBOLS).map(async ([pair, symbol]) => {
+        const response = await fetch(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${symbol}`);
+        if (response.ok) {
+          const data = await response.json();
+          livePrices[pair] = parseFloat(data.price);
         }
-      }
-      console.log('📈 Prices updated from CoinGecko');
+      });
+      
+      await Promise.all(promises);
+      console.log('📈 Prices updated:', livePrices);
     } catch (err) {
       console.error('Price fetch error:', err.message);
     }
   };
 
-  // Fetch immediately, then every 10 seconds
   fetchPrices();
-  priceInterval = setInterval(fetchPrices, 10000); 
+  priceInterval = setInterval(fetchPrices, 15000); // 15 seconds is very safe
 }
 
-// Start the price feed
 startPriceFeed();
 
 function getLivePrice(pair) { return livePrices[pair] ?? null; }
@@ -2215,9 +2204,6 @@ setInterval(async () => {
     }
   } catch (err) {}
 }, 60 * 1000);
-
-
-
 
 
 /* ---------------- START SERVER ---------------- */
