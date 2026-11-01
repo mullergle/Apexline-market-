@@ -2105,53 +2105,62 @@ setInterval(async () => {
         console.error("P&L SIMULATION ERROR:", err);
     }
 }, 60 * 60 * 1000);
-/* ================= LIVE TRADES ================= */
+/* ================= LIVE TRADES (CoinGecko Version) ================= */
 const livePrices = Object.create(null);
-const BINANCE_SYMBOLS = {
-  'BTC/USD':  'btcusdt',
-  'ETH/USD':  'ethusdt',
-  'SOL/USD':  'solusdt',
-  'BNB/USD':  'bnbusdt',
-};
+
 const PACKAGES = {
   BRONZE:   { price: 300,   duration_days: 3,    pair: 'BTC/USD' },
   SILVER:   { price: 1000,  duration_days: 5,    pair: 'ETH/USD' },
   GOLD:     { price: 5000,  duration_days: 20,   pair: 'SOL/USD' },
   PLATINUM: { price: 15000, duration_days: null, pair: 'BTC/USD' },
 };
-const streams = Object.values(BINANCE_SYMBOLS).map(s => `${s}@trade`).join('/');
-let binanceWs = null;
-function connectBinanceFeed() {
-  if (binanceWs) { try { binanceWs.terminate(); } catch (_) {} }
-  binanceWs = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-  binanceWs.on('open', () => console.log('📈 Binance price feed connected'));
-  binanceWs.on('message', (raw) => {
+
+// CoinGecko IDs for the pairs we need
+const COINGECKO_IDS = {
+  'BTC/USD': 'bitcoin',
+  'ETH/USD': 'ethereum',
+  'SOL/USD': 'solana',
+  'BNB/USD': 'binancecoin'
+};
+
+let priceInterval = null;
+
+// Fetch prices from CoinGecko every 10 seconds
+function startPriceFeed() {
+  if (priceInterval) clearInterval(priceInterval);
+
+  const fetchPrices = async () => {
     try {
-      const msg = JSON.parse(raw.toString());
-      const data = msg.data || msg;
-      const stream = msg.stream;                
-      if (!stream || !data) return;
-      const binanceSym = stream.split('@')[0];  
-      const ourPair = Object.keys(BINANCE_SYMBOLS).find(p => BINANCE_SYMBOLS[p] === binanceSym);
-      if (!ourPair) return;
-      const price = parseFloat(data.p);         
-      if (Number.isFinite(price)) livePrices[ourPair] = price;
-    } catch (e) { }
-  });
-  binanceWs.on('error', (err) => console.error('Binance WS error:', err.message));
-  binanceWs.on('close', () => setTimeout(connectBinanceFeed, 3000));
-}
-connectBinanceFeed();
-(async () => {
-  try {
-    for (const [pair, sym] of Object.entries(BINANCE_SYMBOLS)) {
-      const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym.toUpperCase()}`);
-      const d = await r.json();
-      if (d && d.price) livePrices[pair] = parseFloat(d.price);
+      // Fetch all needed coins in one request
+      const ids = Object.values(COINGECKO_IDS).join(',');
+      const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+      
+      if (!response.ok) {
+        throw new Error(`CoinGecko HTTP error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Map the results back to our pairs
+      for (const [pair, coinId] of Object.entries(COINGECKO_IDS)) {
+        if (data[coinId] && data[coinId].usd) {
+          livePrices[pair] = data[coinId].usd;
+        }
+      }
+      console.log('📈 Prices updated from CoinGecko');
+    } catch (err) {
+      console.error('Price fetch error:', err.message);
     }
-    console.log('🌱 Seeded prices:', livePrices);
-  } catch (e) {}
-})();
+  };
+
+  // Fetch immediately, then every 10 seconds
+  fetchPrices();
+  priceInterval = setInterval(fetchPrices, 10000); 
+}
+
+// Start the price feed
+startPriceFeed();
+
 function getLivePrice(pair) { return livePrices[pair] ?? null; }
 
 app.get('/prices', (req, res) => res.json({ success: true, prices: livePrices }));
@@ -2162,7 +2171,10 @@ app.post('/packages/start', async (req, res) => {
     const dir = (direction || 'BUY').toUpperCase();
     const pkg = PACKAGES[String(pkgName).toUpperCase()];
     const entryPrice = getLivePrice(pkg.pair);
-    if (entryPrice == null) return res.status(503).json({ success: false, message: `Price for ${pkg.pair} not available yet.` });
+    
+    if (entryPrice == null) {
+      return res.status(503).json({ success: false, message: `Price for ${pkg.pair} not available yet. Please try again.` });
+    }
 
     const { data, error } = await supabase.rpc('start_live_trade', {
       p_user_id: user_id, p_package: pkgName, p_pair: pkg.pair, 
@@ -2203,6 +2215,8 @@ setInterval(async () => {
     }
   } catch (err) {}
 }, 60 * 1000);
+
+
 
 
 
