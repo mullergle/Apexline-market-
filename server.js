@@ -783,7 +783,8 @@ app.post("/withdraw/create", async (req, res) => {
             type: "Withdrawal",
             amount: cleanAmount,
             status: "Pending",
-            description: "Bitcoin Withdrawal"
+            description: method === "Bank Transfer" ? "Bank Withdrawal" : method + " Withdrawal"
+
         }])
         .select();
 
