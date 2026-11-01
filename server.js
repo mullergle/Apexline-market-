@@ -881,8 +881,7 @@ app.get("/admin/user/:id", async (req, res) => {
 /* ---------------- ADMIN UPDATE USER ---------------- */
 app.put("/admin/user/:id", async (req, res) => {
     const userId = req.params.id;
-    const { full_name, phone, balance, total_trade, assets, active_assets, btc_balance, eth_balance, usdt_balance, is_suspended } = req.body;
-
+    const { full_name, phone, balance, total_trade, assets, active_assets, btc_balance, eth_balance, usdt_balance, is_suspended, txn_type } = req.body;
     const { data: existingUser, error: fetchError } = await supabase
         .from("users")
         .select("balance, full_name, phone")
@@ -930,10 +929,10 @@ app.put("/admin/user/:id", async (req, res) => {
             .from("transactions")
             .insert([{
                 user_id: userId,
-                type: isCredit ? "Deposit" : "Withdrawal",
+                type: txn_type || (isCredit ? "Deposit" : "Withdrawal"),
                 amount: absoluteAmount,
                 status: "Approved",
-                description: isCredit ? "Credit by Nexora Trade Markets" : "Account adjustment by Nexora Trade Markets"
+                description: isCredit ? `Credit by Admin (${txn_type || 'Deposit'})` : `Account adjustment by Admin (${txn_type || 'Withdrawal'})`
             }]);
         if (txnError) console.log("Transaction log error:", txnError);
     }
