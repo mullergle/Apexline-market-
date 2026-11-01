@@ -2206,6 +2206,51 @@ setInterval(async () => {
   } catch (err) {}
 }, 60 * 1000);
 
+/* ---------------- ADMIN: VIEW USER TRADES ---------------- */
+app.get("/admin/trades", async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from("transactions")
+            .select("*")
+            .in("type", ["Crypto", "Forex"])
+            .order("created_at", { ascending: false })
+            .limit(500);
+
+        if (error) return res.status(500).json({ success: false, message: error.message });
+
+        const ids = [...new Set((data || []).map(t => t.user_id))];
+        const userMap = {};
+        if (ids.length) {
+            const { data: users } = await supabase
+                .from("users").select("id, full_name, email").in("id", ids);
+            (users || []).forEach(u => { userMap[u.id] = u; });
+        }
+
+        const re = /^(BUY|SELL)\s+(\S+)\s+\(([^)]*?)\s*lots\)(?:\s*\|\s*SL:\s*(.+))?$/i;
+        const trades = (data || []).map(t => {
+            const m = re.exec(t.description || "");
+            return {
+                id: t.id,
+                user_id: t.user_id,
+                user: userMap[t.user_id] || { full_name: "Unknown", email: "" },
+                trade_type: t.type,
+                action: m ? m[1].toUpperCase() : "—",
+                pair: m ? m[2] : "—",
+                lot_size: m ? m[3] : "—",
+                stop_loss: m && m[4] ? m[4] : null,
+                amount: t.amount,
+                status: t.status,
+                created_at: t.created_at
+            };
+        });
+
+        res.json({ success: true, trades });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
 
 /* ---------------- START SERVER ---------------- */
 app.listen(PORT, async () => {
