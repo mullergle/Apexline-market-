@@ -4,6 +4,7 @@ const cors = require("cors");
 const multer = require("multer");
 const { Resend } = require("resend");
 const crypto = require("crypto");
+const WebSocket = require("ws");
 
 const supabase = require("./supabase");
 
@@ -2104,6 +2105,106 @@ setInterval(async () => {
         console.error("P&L SIMULATION ERROR:", err);
     }
 }, 60 * 60 * 1000);
+/* ================= LIVE TRADES ================= */
+const livePrices = Object.create(null);
+const BINANCE_SYMBOLS = {
+  'BTC/USD':  'btcusdt',
+  'ETH/USD':  'ethusdt',
+  'SOL/USD':  'solusdt',
+  'BNB/USD':  'bnbusdt',
+};
+const PACKAGES = {
+  BRONZE:   { price: 300,   duration_days: 3,    pair: 'BTC/USD' },
+  SILVER:   { price: 1000,  duration_days: 5,    pair: 'ETH/USD' },
+  GOLD:     { price: 5000,  duration_days: 20,   pair: 'SOL/USD' },
+  PLATINUM: { price: 15000, duration_days: null, pair: 'BTC/USD' },
+};
+const streams = Object.values(BINANCE_SYMBOLS).map(s => `${s}@trade`).join('/');
+let binanceWs = null;
+function connectBinanceFeed() {
+  if (binanceWs) { try { binanceWs.terminate(); } catch (_) {} }
+  binanceWs = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+  binanceWs.on('open', () => console.log('📈 Binance price feed connected'));
+  binanceWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      const data = msg.data || msg;
+      const stream = msg.stream;                
+      if (!stream || !data) return;
+      const binanceSym = stream.split('@')[0];  
+      const ourPair = Object.keys(BINANCE_SYMBOLS).find(p => BINANCE_SYMBOLS[p] === binanceSym);
+      if (!ourPair) return;
+      const price = parseFloat(data.p);         
+      if (Number.isFinite(price)) livePrices[ourPair] = price;
+    } catch (e) { }
+  });
+  binanceWs.on('error', (err) => console.error('Binance WS error:', err.message));
+  binanceWs.on('close', () => setTimeout(connectBinanceFeed, 3000));
+}
+connectBinanceFeed();
+(async () => {
+  try {
+    for (const [pair, sym] of Object.entries(BINANCE_SYMBOLS)) {
+      const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym.toUpperCase()}`);
+      const d = await r.json();
+      if (d && d.price) livePrices[pair] = parseFloat(d.price);
+    }
+    console.log('🌱 Seeded prices:', livePrices);
+  } catch (e) {}
+})();
+function getLivePrice(pair) { return livePrices[pair] ?? null; }
+
+app.get('/prices', (req, res) => res.json({ success: true, prices: livePrices }));
+
+app.post('/packages/start', async (req, res) => {
+  try {
+    const { user_id, package: pkgName, direction } = req.body;
+    const dir = (direction || 'BUY').toUpperCase();
+    const pkg = PACKAGES[String(pkgName).toUpperCase()];
+    const entryPrice = getLivePrice(pkg.pair);
+    if (entryPrice == null) return res.status(503).json({ success: false, message: `Price for ${pkg.pair} not available yet.` });
+
+    const { data, error } = await supabase.rpc('start_live_trade', {
+      p_user_id: user_id, p_package: pkgName, p_pair: pkg.pair, 
+      p_direction: dir, p_amount: pkg.price, p_entry_price: entryPrice, p_duration_days: pkg.duration_days
+    });
+    if (error) return res.status(400).json({ success: false, message: error.message });
+    res.json({ success: true, trade: data });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.get('/packages/active/:user_id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('live_trades').select('*').eq('user_id', req.params.user_id).eq('status', 'LIVE').maybeSingle();
+    if (error) throw error;
+    res.json({ success: true, trade: data || null });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/packages/:id/close', async (req, res) => {
+  try {
+    const { data: trade, error: getErr } = await supabase.from('live_trades').select('*').eq('id', req.params.id).eq('status', 'LIVE').single();
+    if (getErr || !trade) return res.status(404).json({ success: false, message: 'Trade not found.' });
+    const exitPrice = getLivePrice(trade.pair);
+    const { data, error } = await supabase.rpc('settle_live_trade', { p_trade_id: trade.id, p_exit_price: exitPrice });
+    if (error) return res.status(400).json({ success: false, message: error.message });
+    res.json({ success: true, trade: data });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+setInterval(async () => {
+  try {
+    const { data: expired } = await supabase.from('live_trades').select('*').eq('status', 'LIVE').not('duration_days', 'is', null);
+    if (!expired) return;
+    for (const t of expired) {
+      if (Date.now() < new Date(t.started_at).getTime() + t.duration_days * 86400000) continue;
+      const exitPrice = getLivePrice(t.pair);
+      if (exitPrice) await supabase.rpc('settle_live_trade', { p_trade_id: t.id, p_exit_price: exitPrice });
+    }
+  } catch (err) {}
+}, 60 * 1000);
+
+
 
 /* ---------------- START SERVER ---------------- */
 app.listen(PORT, async () => {
