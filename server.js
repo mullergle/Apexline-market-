@@ -932,8 +932,8 @@ app.put("/admin/user/:id", async (req, res) => {
                 type: txn_type || (isCredit ? "Deposit" : "Withdrawal"),
                 amount: absoluteAmount,
                 status: "Approved",
-                description: isCredit ? `Credit by Admin (${txn_type || 'Deposit'})` : `Account adjustment by Admin (${txn_type || 'Withdrawal'})`
-            }]);
+                description: txn_type || (isCredit ? 'Deposit' : 'Withdrawal')
+
         if (txnError) console.log("Transaction log error:", txnError);
     }
 
