@@ -405,7 +405,6 @@ app.post("/signup", async (req, res) => {
 
     res.json({ success: true, message: "Account created.", user: data });
 });
-
 /* ---------------- GOOGLE LOGIN ---------------- */
 app.post("/login/google", async (req, res) => {
     const { email, fullName, supabase_id } = req.body;
@@ -417,19 +416,17 @@ app.post("/login/google", async (req, res) => {
     const normalizedEmail = email.trim().toLowerCase();
 
     try {
-        // 1. Check if the user already exists in your database
         let { data: user, error } = await supabase
             .from("users")
             .select("*")
             .eq("email", normalizedEmail)
             .single();
 
-        if (error && error.code !== 'PGRST116') {
-            throw error;
-        }
+        if (error && error.code !== 'PGRST116') throw error;
 
         if (!user) {
-            // 2. User doesn't exist -> Create them with ALL default fields
+            // Create user WITHOUT dummy data. 
+            // Phone, Password, and Country are left null so the user can fill them in later.
             const { data: newUser, error: insertError } = await supabase
                 .from("users")
                 .insert([{
@@ -437,19 +434,21 @@ app.post("/login/google", async (req, res) => {
                     email: normalizedEmail,
                     supabase_id: supabase_id,
                     is_verified: false, 
-                    email_verified: true,  // Google emails are pre-verified
-                    is_admin: false,       // 🔥 THIS IS THE FIX (so they show in admin)
+                    email_verified: true,  
+                    is_admin: false,       
                     is_suspended: false,
-                    balance: 0,
-                    currency: 'USD'
+                    balance: 0
+                    // Note: We are NOT setting country, phone, or password here.
                 }])
                 .select()
                 .single();
 
-            if (insertError) throw insertError;
+            if (insertError) {
+                console.error("❌ GOOGLE INSERT ERROR:", insertError);
+                return res.status(500).json({ success: false, message: insertError.message });
+            }
             user = newUser;
         } else {
-            // 3. User exists -> Make sure their supabase_id and is_admin are set correctly
             const updates = {};
             if (!user.supabase_id) updates.supabase_id = supabase_id;
             if (user.is_admin === null) updates.is_admin = false;
@@ -461,7 +460,6 @@ app.post("/login/google", async (req, res) => {
             }
         }
 
-        // 4. Send back the user data
         res.json({
             success: true,
             message: "Google login successful.",
