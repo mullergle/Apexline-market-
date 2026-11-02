@@ -922,7 +922,7 @@ app.put("/admin/user/:id", async (req, res) => {
 
     if (error) return res.status(500).json({ success: false, message: error.message });
 
-    if (difference !== 0) {
+        if (difference !== 0) {
         const isCredit = difference > 0;
         const absoluteAmount = Math.abs(difference);
         const { error: txnError } = await supabase
@@ -933,9 +933,10 @@ app.put("/admin/user/:id", async (req, res) => {
                 amount: absoluteAmount,
                 status: "Approved",
                 description: txn_type || (isCredit ? 'Deposit' : 'Withdrawal')
-
+            }]);
         if (txnError) console.log("Transaction log error:", txnError);
     }
+
 
     res.json({ success: true, message: "User updated successfully", user: data });
 });
