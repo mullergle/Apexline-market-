@@ -405,6 +405,7 @@ app.post("/signup", async (req, res) => {
 
     res.json({ success: true, message: "Account created.", user: data });
 });
+
 /* ---------------- GOOGLE LOGIN ---------------- */
 app.post("/login/google", async (req, res) => {
     const { email, fullName, supabase_id } = req.body;
@@ -420,25 +421,30 @@ app.post("/login/google", async (req, res) => {
             .from("users")
             .select("*")
             .eq("email", normalizedEmail)
-            .single();
+            .maybeSingle(); // Prevents crashing if user doesn't exist yet
 
-        if (error && error.code !== 'PGRST116') throw error;
+        if (error) throw error;
 
         if (!user) {
-            // Create user WITHOUT dummy data. 
-            // Phone, Password, and Country are left null so the user can fill them in later.
+            // Create user with safe placeholders for required fields
             const { data: newUser, error: insertError } = await supabase
                 .from("users")
                 .insert([{
                     full_name: fullName || email.split('@')[0],
                     email: normalizedEmail,
                     supabase_id: supabase_id,
+                    
+                    // 🔥 Safe placeholders so the database doesn't reject the insert
+                    password: 'google_oauth_' + Date.now(), // Random hidden password
+                    phone: "",   // Empty string
+                    country: "", // Empty string (will be updated on dashboard)
+                    username: email.split('@')[0],
+                    
                     is_verified: false, 
                     email_verified: true,  
                     is_admin: false,       
                     is_suspended: false,
                     balance: 0
-                    // Note: We are NOT setting country, phone, or password here.
                 }])
                 .select()
                 .single();
@@ -449,6 +455,7 @@ app.post("/login/google", async (req, res) => {
             }
             user = newUser;
         } else {
+            // User exists -> Make sure their supabase_id and flags are set
             const updates = {};
             if (!user.supabase_id) updates.supabase_id = supabase_id;
             if (user.is_admin === null) updates.is_admin = false;
@@ -469,7 +476,7 @@ app.post("/login/google", async (req, res) => {
 
     } catch (error) {
         console.error("❌ Google Login Error:", error);
-        res.status(500).json({ success: false, message: "Database error during Google login." });
+        res.status(500).json({ success: false, message: error.message || "Database error during Google login." });
     }
 });
 
