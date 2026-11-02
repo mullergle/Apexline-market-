@@ -1005,6 +1005,50 @@ app.put("/change-password/:id", async (req, res) => {
     res.json({ success: true, message: "Password updated successfully" });
 });
 
+/* ---------------- ADMIN CHANGE PASSWORD ---------------- */
+app.put("/admin/change-password", async (req, res) => {
+    const { admin_id, current_password, new_password } = req.body;
+
+    if (!admin_id || !current_password || !new_password) {
+        return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    try {
+        const { data: user, error } = await supabase
+            .from("users")
+            .select("id, password, is_admin")
+            .eq("id", admin_id)
+            .single();
+
+        if (error || !user) {
+            return res.status(404).json({ success: false, message: "Admin account not found." });
+        }
+
+        if (!user.is_admin) {
+            return res.status(403).json({ success: false, message: "Unauthorized. You are not an admin." });
+        }
+
+        if (user.password !== current_password) {
+            return res.status(401).json({ success: false, message: "Current password is incorrect." });
+        }
+
+        const { error: updateError } = await supabase
+            .from("users")
+            .update({ password: new_password })
+            .eq("id", admin_id);
+
+        if (updateError) {
+            return res.status(500).json({ success: false, message: updateError.message });
+        }
+
+        res.json({ success: true, message: "Password updated successfully." });
+
+    } catch (err) {
+        console.error("CHANGE PASSWORD ERROR:", err);
+        res.status(500).json({ success: false, message: "Internal server error." });
+    }
+});
+
 /* ---------------- DEPOSIT ---------------- */
 app.post("/deposit", upload.single("receipt"), async (req, res) => {
     const { user_id, amount, payment_method } = req.body;
