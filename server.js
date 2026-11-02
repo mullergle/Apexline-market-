@@ -406,6 +406,73 @@ app.post("/signup", async (req, res) => {
     res.json({ success: true, message: "Account created.", user: data });
 });
 
+/* ---------------- GOOGLE LOGIN ---------------- */
+app.post("/login/google", async (req, res) => {
+    const { email, fullName, supabase_id } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ success: false, message: "Email is required." });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    try {
+        // 1. Check if the user already exists in your database
+        let { data: user, error } = await supabase
+            .from("users")
+            .select("*")
+            .eq("email", normalizedEmail)
+            .single();
+
+        if (error && error.code !== 'PGRST116') {
+            // PGRST116 means no rows found, which is fine (we create them below)
+            throw error;
+        }
+
+        if (!user) {
+            // 2. User doesn't exist -> Create them
+            const { data: newUser, error: insertError } = await supabase
+                .from("users")
+                .insert([{
+                    full_name: fullName || email.split('@')[0],
+                    email: normalizedEmail,
+                    supabase_id: supabase_id,
+                    is_verified: false, // You can set this to true if you trust Google emails
+                    email_verified: true, 
+                    balance: 0,
+                    currency: 'USD'
+                }])
+                .select()
+                .single();
+
+            if (insertError) throw insertError;
+            user = newUser;
+        } else {
+            // 3. User exists -> Make sure their supabase_id is updated
+            if (!user.supabase_id) {
+                await supabase
+                    .from("users")
+                    .update({ supabase_id: supabase_id })
+                    .eq("id", user.id);
+                user.supabase_id = supabase_id;
+            }
+        }
+
+        // 4. Send back the user data so the frontend can log them in
+        res.json({
+            success: true,
+            message: "Google login successful.",
+            user: user,
+            token: "google-token" // Your app uses this as a fallback token
+        });
+
+    } catch (error) {
+        console.error("❌ Google Login Error:", error);
+        res.status(500).json({ success: false, message: "Database error during Google login." });
+    }
+});
+
+
 /* ---------------- LOGIN ---------------- */
 app.post("/login", async (req, res) => {
     const { email, password } = req.body;
