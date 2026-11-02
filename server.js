@@ -1394,48 +1394,25 @@ app.get("/settings/deposit-addresses", async (req, res) => {
         .from("platform_settings")
         .select("*")
         .limit(1)
-        .single();
+        .maybeSingle(); // ✅ Change this to maybeSingle()
 
     if (error) return res.status(500).json({ success: false, message: error.message });
-    res.json({ success: true, addresses: data });
-});
-
-app.put("/admin/settings/deposit-addresses", async (req, res) => {
-    const {
-        btc_deposit_address,
-        eth_deposit_address,
-        usdt_deposit_address,
-        trx_deposit_address,
-        sol_deposit_address
-    } = req.body;
-
-    const { data: existing, error: findError } = await supabase
-        .from("platform_settings")
-        .select("id")
-        .limit(1)
-        .single();
-
-    if (findError || !existing) {
-        return res.status(404).json({ success: false, message: "Platform settings row not found." });
+    
+    // If the table is empty, return a blank template so the UI doesn't break
+    if (!data) {
+        return res.json({ 
+            success: true, 
+            addresses: {
+                btc_deposit_address: "",
+                eth_deposit_address: "",
+                usdt_deposit_address: "",
+                trx_deposit_address: "",
+                sol_deposit_address: ""
+            } 
+        });
     }
-
-    const updatePayload = { updated_at: new Date().toISOString() };
-
-    if (btc_deposit_address !== undefined) updatePayload.btc_deposit_address = btc_deposit_address;
-    if (eth_deposit_address !== undefined) updatePayload.eth_deposit_address = eth_deposit_address;
-    if (usdt_deposit_address !== undefined) updatePayload.usdt_deposit_address = usdt_deposit_address;
-    if (trx_deposit_address !== undefined) updatePayload.trx_deposit_address = trx_deposit_address;
-    if (sol_deposit_address !== undefined) updatePayload.sol_deposit_address = sol_deposit_address;
-
-    const { data, error } = await supabase
-        .from("platform_settings")
-        .update(updatePayload)
-        .eq("id", existing.id)
-        .select()
-        .single();
-
-    if (error) return res.status(500).json({ success: false, message: error.message });
-    res.json({ success: true, message: "Deposit addresses updated successfully.", addresses: data });
+    
+    res.json({ success: true, addresses: data });
 });
 
 /* ---------------- USER KYC SUBMISSION ---------------- */
