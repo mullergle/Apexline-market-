@@ -2407,6 +2407,35 @@ app.get("/admin/trades", async (req, res) => {
 });
 
 
+/* ---------------- UPDATE PROFILE (For Google Users) ---------------- */
+app.post("/update-profile", async (req, res) => {
+    const { user_id, country, currency } = req.body;
+
+    if (!user_id) {
+        return res.status(400).json({ success: false, message: "User ID is required." });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from("users")
+            .update({ 
+                country: country,
+                currency: currency
+            })
+            .eq("id", user_id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        
+        res.json({ success: true, message: "Profile updated successfully.", user: data });
+    } catch (err) {
+        console.error("❌ UPDATE PROFILE ERROR:", err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
 
 /* ---------------- START SERVER ---------------- */
 app.listen(PORT, async () => {
