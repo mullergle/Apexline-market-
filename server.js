@@ -1394,7 +1394,7 @@ app.get("/settings/deposit-addresses", async (req, res) => {
         .from("platform_settings")
         .select("*")
         .limit(1)
-        .maybeSingle(); // ✅ Change this to maybeSingle()
+        .maybeSingle(); // ✅ Changed to maybeSingle
 
     if (error) return res.status(500).json({ success: false, message: error.message });
     
@@ -1413,6 +1413,67 @@ app.get("/settings/deposit-addresses", async (req, res) => {
     }
     
     res.json({ success: true, addresses: data });
+});
+
+app.put("/admin/settings/deposit-addresses", async (req, res) => {
+    const {
+        btc_deposit_address,
+        eth_deposit_address,
+        usdt_deposit_address,
+        trx_deposit_address,
+        sol_deposit_address
+    } = req.body;
+
+    // 1. Check if a row exists
+    const { data: existing, error: findError } = await supabase
+        .from("platform_settings")
+        .select("id")
+        .limit(1)
+        .maybeSingle(); // ✅ Changed to maybeSingle
+
+    if (findError) return res.status(500).json({ success: false, message: findError.message });
+
+    const updatePayload = { 
+        updated_at: new Date().toISOString(),
+        btc_deposit_address,
+        eth_deposit_address,
+        usdt_deposit_address,
+        trx_deposit_address,
+        sol_deposit_address
+    };
+
+    let result, error;
+
+    if (!existing) {
+        // 2a. If no row exists, INSERT a new one
+        const { data, error: insertErr } = await supabase
+            .from("platform_settings")
+            .insert([updatePayload])
+            .select()
+            .maybeSingle();
+        
+        result = data;
+        error = insertErr;
+    } else {
+        // 2b. If row exists, UPDATE it
+        const { data, error: updateErr } = await supabase
+            .from("platform_settings")
+            .update(updatePayload)
+            .eq("id", existing.id)
+            .select()
+            .maybeSingle();
+        
+        result = data;
+        error = updateErr;
+    }
+
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    
+    res.json({ 
+        success: true, 
+        message: "Deposit addresses updated successfully.", 
+        addresses: result 
+    });
 });
 
 /* ---------------- USER KYC SUBMISSION ---------------- */
