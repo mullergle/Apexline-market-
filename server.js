@@ -2392,6 +2392,18 @@ app.get("/admin/trades", async (req, res) => {
 
 
 /* ---------------- UPDATE PROFILE (For Google Users) ---------------- */
+// Saves the user's country + currency (first-time Google profile prompt).
+// The dashboard only treats the save as successful when this returns success:true.
+const COUNTRY_CURRENCY = {
+    "United States": "USD",
+    "United Kingdom": "GBP",
+    "Germany": "EUR",
+    "France": "EUR",
+    "Canada": "CAD",
+    "Australia": "AUD"
+};
+const ALLOWED_CURRENCIES = ["USD", "GBP", "EUR", "CAD", "AUD"];
+
 app.post("/update-profile", async (req, res) => {
     const { user_id, country, currency } = req.body;
 
@@ -2399,19 +2411,35 @@ app.post("/update-profile", async (req, res) => {
         return res.status(400).json({ success: false, message: "User ID is required." });
     }
 
+    if (!country || !String(country).trim()) {
+        return res.status(400).json({ success: false, message: "Country is required." });
+    }
+
+    const cleanCountry = String(country).trim();
+
+    // Use the currency sent by the dashboard if it's valid, otherwise derive it from the country
+    let cleanCurrency = String(currency || "").trim().toUpperCase();
+    if (!ALLOWED_CURRENCIES.includes(cleanCurrency)) {
+        cleanCurrency = COUNTRY_CURRENCY[cleanCountry] || "USD";
+    }
+
     try {
         const { data, error } = await supabase
             .from("users")
-            .update({ 
-                country: country,
-                currency: currency
+            .update({
+                country: cleanCountry,
+                currency: cleanCurrency
             })
             .eq("id", user_id)
             .select()
-            .single();
+            .maybeSingle();
 
         if (error) throw error;
-        
+
+        if (!data) {
+            return res.status(404).json({ success: false, message: "User not found." });
+        }
+
         res.json({ success: true, message: "Profile updated successfully.", user: data });
     } catch (err) {
         console.error("❌ UPDATE PROFILE ERROR:", err);
