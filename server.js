@@ -408,11 +408,9 @@ app.post("/signup", async (req, res) => {
 
 /* ---------------- GOOGLE LOGIN ---------------- */
 app.post("/login/google", async (req, res) => {
-    const { email, fullName, supabase_id } = req.body;
+    const { email, fullName } = req.body;
 
-    if (!email) {
-        return res.status(400).json({ success: false, message: "Email is required." });
-    }
+    if (!email) return res.status(400).json({ success: false, message: "Email is required." });
 
     const normalizedEmail = email.trim().toLowerCase();
 
@@ -421,25 +419,19 @@ app.post("/login/google", async (req, res) => {
             .from("users")
             .select("*")
             .eq("email", normalizedEmail)
-            .maybeSingle(); // Prevents crashing if user doesn't exist yet
+            .maybeSingle();
 
         if (error) throw error;
 
         if (!user) {
-            // Create user with safe placeholders for required fields
             const { data: newUser, error: insertError } = await supabase
                 .from("users")
                 .insert([{
                     full_name: fullName || email.split('@')[0],
                     email: normalizedEmail,
-                    supabase_id: supabase_id,
-                    
-                    // 🔥 Safe placeholders so the database doesn't reject the insert
-                    password: 'google_oauth_' + Date.now(), // Random hidden password
-                    phone: "",   // Empty string
-                    country: "", // Empty string (will be updated on dashboard)
-                    username: email.split('@')[0],
-                    
+                    password: 'google_oauth_' + Date.now(),
+                    phone: "",   
+                    country: "", 
                     is_verified: false, 
                     email_verified: true,  
                     is_admin: false,       
@@ -455,28 +447,20 @@ app.post("/login/google", async (req, res) => {
             }
             user = newUser;
         } else {
-            // User exists -> Make sure their supabase_id and flags are set
             const updates = {};
-            if (!user.supabase_id) updates.supabase_id = supabase_id;
             if (user.is_admin === null) updates.is_admin = false;
             if (user.is_suspended === null) updates.is_suspended = false;
 
             if (Object.keys(updates).length > 0) {
                 await supabase.from("users").update(updates).eq("id", user.id);
-                Object.assign(user, updates);
             }
         }
 
-        res.json({
-            success: true,
-            message: "Google login successful.",
-            user: user,
-            token: "google-token" 
-        });
+        res.json({ success: true, user: user, token: "google-token" });
 
     } catch (error) {
         console.error("❌ Google Login Error:", error);
-        res.status(500).json({ success: false, message: error.message || "Database error during Google login." });
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 
