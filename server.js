@@ -425,20 +425,21 @@ app.post("/login/google", async (req, res) => {
             .single();
 
         if (error && error.code !== 'PGRST116') {
-            // PGRST116 means no rows found, which is fine (we create them below)
             throw error;
         }
 
         if (!user) {
-            // 2. User doesn't exist -> Create them
+            // 2. User doesn't exist -> Create them with ALL default fields
             const { data: newUser, error: insertError } = await supabase
                 .from("users")
                 .insert([{
                     full_name: fullName || email.split('@')[0],
                     email: normalizedEmail,
                     supabase_id: supabase_id,
-                    is_verified: false, // You can set this to true if you trust Google emails
-                    email_verified: true, 
+                    is_verified: false, 
+                    email_verified: true,  // Google emails are pre-verified
+                    is_admin: false,       // 🔥 THIS IS THE FIX (so they show in admin)
+                    is_suspended: false,
                     balance: 0,
                     currency: 'USD'
                 }])
@@ -448,22 +449,24 @@ app.post("/login/google", async (req, res) => {
             if (insertError) throw insertError;
             user = newUser;
         } else {
-            // 3. User exists -> Make sure their supabase_id is updated
-            if (!user.supabase_id) {
-                await supabase
-                    .from("users")
-                    .update({ supabase_id: supabase_id })
-                    .eq("id", user.id);
-                user.supabase_id = supabase_id;
+            // 3. User exists -> Make sure their supabase_id and is_admin are set correctly
+            const updates = {};
+            if (!user.supabase_id) updates.supabase_id = supabase_id;
+            if (user.is_admin === null) updates.is_admin = false;
+            if (user.is_suspended === null) updates.is_suspended = false;
+
+            if (Object.keys(updates).length > 0) {
+                await supabase.from("users").update(updates).eq("id", user.id);
+                Object.assign(user, updates);
             }
         }
 
-        // 4. Send back the user data so the frontend can log them in
+        // 4. Send back the user data
         res.json({
             success: true,
             message: "Google login successful.",
             user: user,
-            token: "google-token" // Your app uses this as a fallback token
+            token: "google-token" 
         });
 
     } catch (error) {
@@ -471,7 +474,6 @@ app.post("/login/google", async (req, res) => {
         res.status(500).json({ success: false, message: "Database error during Google login." });
     }
 });
-
 
 /* ---------------- LOGIN ---------------- */
 app.post("/login", async (req, res) => {
