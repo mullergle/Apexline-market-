@@ -2424,23 +2424,47 @@ app.post("/update-profile", async (req, res) => {
     }
 
     try {
-        const { data, error } = await supabase
+        // 1) Try saving country + currency together
+        let { error: updErr } = await supabase
             .from("users")
-            .update({
-                country: cleanCountry,
-                currency: cleanCurrency
-            })
+            .update({ country: cleanCountry, currency: cleanCurrency })
+            .eq("id", user_id);
+
+        if (updErr) {
+            console.error("❌ UPDATE PROFILE (country+currency) failed:", updErr);
+            // 2) Retry with country only (in case the currency column is the problem)
+            const retry = await supabase
+                .from("users")
+                .update({ country: cleanCountry })
+                .eq("id", user_id);
+
+            if (retry.error) {
+                console.error("❌ UPDATE PROFILE (country only) failed:", retry.error);
+                return res.status(500).json({ success: false, message: retry.error.message || "Database error while saving profile." });
+            }
+        }
+
+        // 3) Read the row back and make sure the country is REALLY saved
+        const { data, error: readErr } = await supabase
+            .from("users")
+            .select("*")
             .eq("id", user_id)
-            .select()
             .maybeSingle();
 
-        if (error) throw error;
-
+        if (readErr) throw readErr;
         if (!data) {
             return res.status(404).json({ success: false, message: "User not found." });
         }
+        if (String(data.country || "").trim() !== cleanCountry) {
+            console.error("❌ UPDATE PROFILE: country not persisted for user", user_id);
+            return res.status(500).json({ success: false, message: "Your country could not be saved. Please try again." });
+        }
 
-        res.json({ success: true, message: "Profile updated successfully.", user: data });
+        res.json({
+            success: true,
+            message: "Profile updated successfully.",
+            user: { ...data, currency: data.currency || cleanCurrency }
+        });
     } catch (err) {
         console.error("❌ UPDATE PROFILE ERROR:", err);
         res.status(500).json({ success: false, message: err.message });
