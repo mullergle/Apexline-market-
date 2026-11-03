@@ -8,6 +8,8 @@ const WebSocket = require("ws");
 
 const supabase = require("./supabase");
 
+const { getCurrencyForCountry, convertFromUSD, listCountries } = require("./currency");
+
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const CODE_EXPIRY = 10 * 60 * 1000; // 10 minutes
