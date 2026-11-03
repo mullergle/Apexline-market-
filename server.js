@@ -7,7 +7,6 @@ const crypto = require("crypto");
 const WebSocket = require("ws");
 
 const supabase = require("./supabase");
-
 const { getCurrencyForCountry, convertFromUSD, listCountries } = require("./currency");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -28,7 +27,7 @@ const upload = multer({
 app.use(cors());
 app.use(express.json());
 
-/* ---------------- COUNTRIES (for settings dropdown) ---------------- */
+/* ---------------- COUNTRIES ---------------- */
 app.get("/countries", (req, res) => {
     res.json({ success: true, countries: listCountries() });
 });
@@ -506,7 +505,7 @@ app.post("/login", async (req, res) => {
     });
 });
 
-/* ---------------- GET USER ---------------- */
+/* ---------------- GET USER (UPDATED FOR CURRENCY) ---------------- */
 app.get("/user/:id", async (req, res) => {
     const { data, error } = await supabase
         .from("users")
@@ -546,20 +545,25 @@ app.get("/user/:id", async (req, res) => {
         });
     }
 
+    const currency = getCurrencyForCountry(data.country);
+    const cvt = (v) => convertFromUSD(v, data.country);
+
     res.json({
         success: true,
+        currency: currency,
         user: {
             ...data,
+            currency: currency,
             referral_code: refCode,
             referral_count: referralCount || 0,
-            total_earned_display: formatMoney(data.total_earned || 0),
-            balance_display: formatMoney(data.balance),
-            total_trade_display: formatMoney(data.total_trade),
-            total_deposit_display: formatMoney(totalDeposit),
-            total_withdrawal_display: formatMoney(totalWithdrawal),
-            btc_balance_display: formatMoney(data.btc_balance),
-            eth_balance_display: formatMoney(data.eth_balance),
-            usdt_balance_display: formatMoney(data.usdt_balance)
+            total_earned_display: formatMoney(cvt(data.total_earned || 0)),
+            balance_display: formatMoney(cvt(data.balance)),
+            total_trade_display: formatMoney(cvt(data.total_trade)),
+            total_deposit_display: formatMoney(cvt(totalDeposit)),
+            total_withdrawal_display: formatMoney(cvt(totalWithdrawal)),
+            btc_balance_display: formatMoney(cvt(data.btc_balance)),
+            eth_balance_display: formatMoney(cvt(data.eth_balance)),
+            usdt_balance_display: formatMoney(cvt(data.usdt_balance))
         }
     });
 });
@@ -1181,10 +1185,16 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
 
     res.json({ success: true, message: "Deposit submitted successfully.", deposit: data });
 });
+
+/* ---------------- GET TRANSACTIONS (UPDATED FOR CURRENCY) ---------------- */
 app.get("/transactions/:userId", async (req, res) => {
+    const { data: userRow } = await supabase
+        .from("users").select("country").eq("id", req.params.userId).single();
+    const country = userRow?.country;
+    const currency = getCurrencyForCountry(country);
+
     const { data, error } = await supabase
-        .from("transactions")
-        .select("*")
+        .from("transactions").select("*")
         .eq("user_id", req.params.userId)
         .order("created_at", { ascending: false });
 
@@ -1192,7 +1202,16 @@ app.get("/transactions/:userId", async (req, res) => {
 
     res.json({
         success: true,
-        transactions: (data || []).map(t => ({ ...t, amount_display: formatMoney(t.amount) }))
+        currency: currency,
+        transactions: (data || []).map(t => {
+            const local = convertFromUSD(t.amount, country);
+            return {
+                ...t,
+                amount_local: local,
+                amount_display: formatMoney(local),
+                currency_symbol: currency.symbol
+            };
+        })
     });
 });
 
@@ -2431,7 +2450,6 @@ app.post("/update-profile", async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
-
 
 
 /* ---------------- START SERVER ---------------- */
