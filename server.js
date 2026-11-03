@@ -28,6 +28,11 @@ const upload = multer({
 app.use(cors());
 app.use(express.json());
 
+/* ---------------- COUNTRIES (for settings dropdown) ---------------- */
+app.get("/countries", (req, res) => {
+    res.json({ success: true, countries: listCountries() });
+});
+
 /* ---------------- HELPERS ---------------- */
 function formatMoney(value) {
     const num = Number(value || 0);
@@ -2393,79 +2398,33 @@ app.get("/admin/trades", async (req, res) => {
 });
 
 
-/* ---------------- UPDATE PROFILE (For Google Users) ---------------- */
-// Saves the user's country + currency (first-time Google profile prompt).
-// The dashboard only treats the save as successful when this returns success:true.
-const COUNTRY_CURRENCY = {
-    "United States": "USD",
-    "United Kingdom": "GBP",
-    "Germany": "EUR",
-    "France": "EUR",
-    "Canada": "CAD",
-    "Australia": "AUD"
-};
-const ALLOWED_CURRENCIES = ["USD", "GBP", "EUR", "CAD", "AUD"];
-
+/* ---------------- UPDATE PROFILE (country + currency) ---------------- */
 app.post("/update-profile", async (req, res) => {
-    const { user_id, country, currency } = req.body;
+    const { user_id, country } = req.body;
 
-    if (!user_id) {
-        return res.status(400).json({ success: false, message: "User ID is required." });
-    }
-
+    if (!user_id) return res.status(400).json({ success: false, message: "User ID is required." });
     if (!country || !String(country).trim()) {
         return res.status(400).json({ success: false, message: "Country is required." });
     }
 
     const cleanCountry = String(country).trim();
-
-    // Use the currency sent by the dashboard if it's valid, otherwise derive it from the country
-    let cleanCurrency = String(currency || "").trim().toUpperCase();
-    if (!ALLOWED_CURRENCIES.includes(cleanCurrency)) {
-        cleanCurrency = COUNTRY_CURRENCY[cleanCountry] || "USD";
-    }
+    const currency = getCurrencyForCountry(cleanCountry);
 
     try {
-        // 1) Try saving country + currency together
-        let { error: updErr } = await supabase
+        const { error: updErr } = await supabase
             .from("users")
-            .update({ country: cleanCountry, currency: cleanCurrency })
+            .update({ country: cleanCountry, currency: currency.code })
             .eq("id", user_id);
 
         if (updErr) {
-            console.error("❌ UPDATE PROFILE (country+currency) failed:", updErr);
-            // 2) Retry with country only (in case the currency column is the problem)
-            const retry = await supabase
-                .from("users")
-                .update({ country: cleanCountry })
-                .eq("id", user_id);
-
-            if (retry.error) {
-                console.error("❌ UPDATE PROFILE (country only) failed:", retry.error);
-                return res.status(500).json({ success: false, message: retry.error.message || "Database error while saving profile." });
-            }
-        }
-
-        // 3) Read the row back and make sure the country is REALLY saved
-        const { data, error: readErr } = await supabase
-            .from("users")
-            .select("*")
-            .eq("id", user_id)
-            .maybeSingle();
-
-        if (readErr) throw readErr;
-        if (!data) {
-            return res.status(404).json({ success: false, message: "User not found." });
-        }
-        if (String(data.country || "").trim() !== cleanCountry) {
-            console.error("❌ UPDATE PROFILE: country not persisted for user", user_id);
-            return res.status(500).json({ success: false, message: "Your country could not be saved. Please try again." });
+            console.error("❌ UPDATE PROFILE failed:", updErr);
+            return res.status(500).json({ success: false, message: updErr.message });
         }
 
         res.json({
             success: true,
-            message: "Profile updated successfully.",
-            user: { ...data, currency: data.currency || cleanCurrency }
+            message: `Country updated to ${cleanCountry}.`,
+            currency
         });
     } catch (err) {
         console.error("❌ UPDATE PROFILE ERROR:", err);
