@@ -2451,6 +2451,37 @@ app.post("/update-profile", async (req, res) => {
     }
 });
 
+/* ---------------- CHECK EMAIL EXISTS ---------------- */
+app.get("/check-email/:email", async (req, res) => {
+    try {
+        const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+        
+        if (!email || !email.includes('@')) {
+            return res.status(400).json({ success: false, exists: false });
+        }
+
+        const { data: user, error } = await supabase
+            .from("users")
+            .select("id, email_verified")
+            .eq("email", email)
+            .maybeSingle();
+
+        if (error) throw error;
+
+        // Return true if the user exists AND their email is verified
+        if (user && user.email_verified === true) {
+            return res.json({ success: true, exists: true });
+        }
+
+        // User doesn't exist, OR they exist but never verified their email
+        return res.json({ success: true, exists: false });
+
+    } catch (err) {
+        console.error("EMAIL CHECK ERROR:", err);
+        res.status(500).json({ success: false, exists: false });
+    }
+});
+
 
 /* ---------------- START SERVER ---------------- */
 app.listen(PORT, async () => {
