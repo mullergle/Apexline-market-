@@ -27,15 +27,27 @@ setInterval(fetchLiveRates, CACHE_MS);
  * conversion:  usdAmount * rate_to_usd  →  local amount
  */
 function getCurrencyForCountry(country) {
-    const meta = COUNTRIES[country] || COUNTRIES["United States"];
+    const known = Object.prototype.hasOwnProperty.call(COUNTRIES, country);
+    if (!known) {
+        console.warn(`⚠️ Unknown country "${country}", falling back to United States`);
+    }
+    const resolvedCountry = known ? country : "United States";
+    const meta = COUNTRIES[resolvedCountry];
+
     const liveRate = ratesCache.rates[meta.code];
+    const hasLive = typeof liveRate === "number" && isFinite(liveRate) && liveRate > 0;
+
+    // countries.js stores the static rate as `rate` (1 USD in local currency)
+    const staticRate = Number(meta.rate);
+    const rate = hasLive ? liveRate : (isFinite(staticRate) && staticRate > 0 ? staticRate : 1);
+
     return {
-        country: country || "United States",
+        country: resolvedCountry,
         code: meta.code,
         symbol: meta.symbol,
-        name: meta.name,
-        rate_to_usd: typeof liveRate === "number" ? liveRate : meta.rate_to_usd,
-        live: typeof liveRate === "number"
+        name: meta.name || meta.code,
+        rate_to_usd: rate,
+        live: hasLive
     };
 }
 
