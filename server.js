@@ -2272,20 +2272,23 @@ setInterval(async () => {
         console.error("P&L SIMULATION ERROR:", err);
     }
 }, 60 * 60 * 1000);
+ 
 /* ================= LIVE TRADES (Binance Mirror) ================= */
 const livePrices = Object.create(null);
 
 const PACKAGES = {
-  BRONZE:   { price: 300,   duration_days: 3,    pair: 'BTC/USD' },
-  SILVER:   { price: 1000,  duration_days: 5,    pair: 'ETH/USD' },
-  GOLD:     { price: 5000,  duration_days: 20,   pair: 'SOL/USD' },
-  PLATINUM: { price: 15000, duration_days: null, pair: 'BTC/USD' },
+  'EUR/USD': { min_price: 200,   duration_days: 1 / 24,    pips: 100,  pair: 'EUR/USD' },
+  'BTC/USD': { min_price: 500,   duration_days: 2.25 / 1440, pips: 230, pair: 'BTC/USD' },
+  'XAU/USD': { min_price: 1000,  duration_days: 4 / 24,    pips: 470,  pair: 'XAU/USD' },
+  'XAG/USD': { min_price: 5000,  duration_days: 10 / 24,   pips: 1000, pair: 'XAG/USD' }
 };
 
 const BINANCE_SYMBOLS = {
   'BTC/USD': 'BTCUSDT',
   'ETH/USD': 'ETHUSDT',
-  'SOL/USD': 'SOLUSDT'
+  'SOL/USD': 'SOLUSDT',
+  'XAU/USD': 'PAXGUSDT', // Using PAXG as a proxy for Gold
+  'EUR/USD': 'EURUSDT'   // Using EURUSDT from Binance
 };
 
 let priceInterval = null;
@@ -2305,14 +2308,13 @@ function startPriceFeed() {
       });
       
       await Promise.all(promises);
-      console.log('📈 Prices updated:', livePrices);
     } catch (err) {
       console.error('Price fetch error:', err.message);
     }
   };
 
   fetchPrices();
-  priceInterval = setInterval(fetchPrices, 15000); // 15 seconds is very safe
+  priceInterval = setInterval(fetchPrices, 15000); // 15 seconds
 }
 
 startPriceFeed();
@@ -2325,7 +2327,13 @@ app.post('/packages/start', async (req, res) => {
   try {
     const { user_id, package: pkgName, direction } = req.body;
     const dir = (direction || 'BUY').toUpperCase();
-    const pkg = PACKAGES[String(pkgName).toUpperCase()];
+    
+    // Check if the package exists in our updated list
+    const pkg = PACKAGES[pkgName];
+    if (!pkg) {
+      return res.status(400).json({ success: false, message: `Invalid package: ${pkgName}` });
+    }
+
     const entryPrice = getLivePrice(pkg.pair);
     
     if (entryPrice == null) {
@@ -2333,12 +2341,22 @@ app.post('/packages/start', async (req, res) => {
     }
 
     const { data, error } = await supabase.rpc('start_live_trade', {
-      p_user_id: user_id, p_package: pkgName, p_pair: pkg.pair, 
-      p_direction: dir, p_amount: pkg.price, p_entry_price: entryPrice, p_duration_days: pkg.duration_days
+      p_user_id: user_id, 
+      p_package: pkgName, 
+      p_pair: pkg.pair, 
+      p_direction: dir, 
+      p_amount: pkg.min_price, 
+      p_entry_price: entryPrice, 
+      p_duration_days: pkg.duration_days
     });
+    
     if (error) return res.status(400).json({ success: false, message: error.message });
+    
+    // Ensure the trade object is fully returned to the frontend
     res.json({ success: true, trade: data });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  } catch (err) { 
+    res.status(500).json({ success: false, message: err.message }); 
+  }
 });
 
 app.get('/packages/active/:user_id', async (req, res) => {
@@ -2371,6 +2389,7 @@ setInterval(async () => {
     }
   } catch (err) {}
 }, 60 * 1000);
+
 
 /* ---------------- ADMIN: VIEW USER TRADES ---------------- */
 app.get("/admin/trades", async (req, res) => {
