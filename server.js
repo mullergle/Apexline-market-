@@ -2554,25 +2554,15 @@ app.post('/packages/:id/close', async (req, res) => {
     await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
 
     // Insert into history
+    // Find this block inside app.post('/packages/:id/close'):
     await supabase.from('transactions').insert([{
       user_id: trade.user_id,
       type: 'Trade Result',
-      amount: Math.abs(realizedPnl),
+      amount: realizedPnl, // ✅ CHANGED: Removed Math.abs() so losses stay negative
       pnl: realizedPnl,
       status: 'Approved',
       description: `${trade.package} ${trade.direction} closed. P/L: ${realizedPnl >= 0 ? '+' : '-'}$${Math.abs(realizedPnl).toFixed(2)}`
     }]);
-
-    res.json({
-      success: true,
-      trade: closedTrade,
-      credited: realizedPnl,
-      new_balance: newBalance
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 // ==============================================================
 // ✅ MT5 AUTO-CLOSE WATCHER (Runs every 5 seconds)
