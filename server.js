@@ -2386,7 +2386,8 @@ const livePrices = Object.create(null);
 
 const PACKAGES = {
   'EUR/USD': { min_price: 200,   duration_days: 1 / 24,    pips: 100,  pair: 'EUR/USD' },
-  'BTC/USD': { min_price: 500,   duration_days: 2.25 / 1440, pips: 230, pair: 'BTC/USD' },
+  // ✅ FIX: Changed 1440 to 24 to make it 2.25 hours instead of 2.25 minutes
+  'BTC/USD': { min_price: 500,   duration_days: 2.25 / 24, pips: 230, pair: 'BTC/USD' },
   'XAU/USD': { min_price: 1000,  duration_days: 4 / 24,    pips: 470,  pair: 'XAU/USD' },
   'XAG/USD': { min_price: 5000,  duration_days: 10 / 24,   pips: 1000, pair: 'XAG/USD' }
 };
@@ -2633,6 +2634,59 @@ setInterval(async () => {
     console.error('Watcher Error:', err);
   }
 }, 5000);
+
+// ==============================================================
+// ✅ NEW: MT5 EXPIRY WATCHER (Runs every 5 seconds)
+// Closes trades immediately when their duration ends.
+// ==============================================================
+setInterval(async () => {
+  try {
+    const { data: expired } = await supabase.from('live_trades').select('*').eq('status', 'LIVE').not('duration_days', 'is', null);
+    if (!expired || expired.length === 0) return;
+
+    for (const t of expired) {
+      // Check if time has expired
+      if (Date.now() < new Date(t.started_at).getTime() + t.duration_days * 86400000) continue;
+      
+      const exitPrice = getLivePrice(t.pair);
+      if (!exitPrice) continue;
+
+      // Calculate P&L at expiry
+      const dir = t.direction === 'SELL' ? -1 : 1;
+      const pctChange = ((exitPrice - Number(t.entry_price)) * dir) / Number(t.entry_price);
+      let leverage = 500;
+      if (t.pair.includes('XAU')) leverage = 1000;
+      if (t.pair.includes('XAG')) leverage = 800;
+      if (t.pair.includes('EUR')) leverage = 300;
+      const realizedPnl = Number(t.margin_locked) * (pctChange * leverage);
+
+      // Close the trade
+      await supabase.from('live_trades').update({
+        status: 'CLOSED',
+        settled_at: new Date().toISOString(),
+        realized_pnl: realizedPnl,
+        close_reason: 'expired'
+      }).eq('id', t.id);
+
+      // Credit ONLY the P&L back to user
+      const { data: user } = await supabase.from('users').select('balance').eq('id', t.user_id).single();
+      const newBalance = Number(user.balance) + realizedPnl;
+      await supabase.from('users').update({ balance: newBalance }).eq('id', t.user_id);
+
+      // Log the result
+      await supabase.from('transactions').insert([{
+        user_id: t.user_id,
+        type: 'Trade Result',
+        amount: realizedPnl, 
+        pnl: realizedPnl,    
+        status: 'Approved',
+        description: `${t.package} Expired. P/L: ${realizedPnl >= 0 ? '+' : '-'}$${Math.abs(realizedPnl).toFixed(2)}`
+      }]);
+    }
+  } catch (err) {
+    console.error('Expiry Watcher Error:', err);
+  }
+}, 5000); // ✅ Runs every 5 seconds
 
 /* ---------------- ADMIN: VIEW USER TRADES ---------------- */
 app.get("/admin/trades", async (req, res) => {
