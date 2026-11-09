@@ -2057,6 +2057,70 @@ app.post("/trade", async (req, res) => {
     }
 });
 
+/* ---------------- CLOSE CRYPTO/FOREX TRADE ---------------- */
+app.post("/trade/close", async (req, res) => {
+    const { trade_id, user_id, return_amount } = req.body;
+
+    if (!trade_id || !user_id || !return_amount) {
+        return res.status(400).json({ success: false, message: "Missing required fields." });
+    }
+
+    try {
+        // 1. Get the original trade
+        const { data: trade, error: tradeErr } = await supabase
+            .from("transactions")
+            .select("*")
+            .eq("id", trade_id)
+            .eq("user_id", user_id)
+            .single();
+
+        if (tradeErr || !trade) {
+            return res.status(404).json({ success: false, message: "Trade not found." });
+        }
+
+        const originalStake = Number(trade.amount);
+        const payout = Number(return_amount);
+        const netProfit = payout - originalStake; // e.g., 400 - 100 = 300
+
+        // 2. Add the payout to the user's balance
+        const { data: user } = await supabase
+            .from("users")
+            .select("balance")
+            .eq("id", user_id)
+            .single();
+
+        const newBalance = Number(user.balance || 0) + payout;
+        await supabase.from("users").update({ balance: newBalance }).eq("id", user_id);
+
+        // 3. Mark the original trade as "Closed" so the dashboard knows
+        await supabase
+            .from("transactions")
+            .update({ status: "Closed", description: `${trade.description} | P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}` })
+            .eq("id", trade_id);
+
+        // 4. Log the return payout as a new transaction
+        await supabase
+            .from("transactions")
+            .insert([{
+                user_id,
+                type: "Profit", // We use 'Profit' so the dashboard knows it's a return
+                amount: payout,
+                status: "Approved",
+                description: `Trade closed: Returned $${payout.toFixed(2)} (P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)})`
+            }]);
+
+        res.json({ 
+            success: true, 
+            message: `Trade closed. $${payout.toFixed(2)} credited (P/L: $${netProfit.toFixed(2)})`,
+            new_balance: newBalance
+        });
+
+    } catch (error) {
+        console.error("CLOSE TRADE ERROR:", error);
+        res.status(500).json({ success: false, message: "Failed to close trade." });
+    }
+});
+
 /* ================================================================ */
 /* ============= COPY TRADING WITH P&L SIMULATION ================= */
 /* ================================================================ */
