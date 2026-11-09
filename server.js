@@ -186,7 +186,6 @@ app.post("/signup/send-code", async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Check for existing user
     const { data: existingUser } = await supabase
         .from("users")
         .select("id, email_verified, is_verified")
@@ -194,7 +193,6 @@ app.post("/signup/send-code", async (req, res) => {
         .single();
 
     if (existingUser) {
-        // ✅ Only block if the email was actually verified
         if (existingUser.email_verified === true) {
             return res.status(400).json({ 
                 success: false, 
@@ -202,7 +200,6 @@ app.post("/signup/send-code", async (req, res) => {
             });
         }
 
-        // Unverified account exists → update it with fresh signup data
         const { error: updateError } = await supabase
             .from("users")
             .update({
@@ -214,7 +211,7 @@ app.post("/signup/send-code", async (req, res) => {
                 language: language || 'en',
                 currency: currency || 'USD',
                 email_verified: false,
-                is_verified: false  // reset KYC too — they never verified
+                is_verified: false
             })
             .eq("id", existingUser.id);
 
@@ -223,7 +220,6 @@ app.post("/signup/send-code", async (req, res) => {
             return res.status(500).json({ success: false, message: "Database error: " + updateError.message });
         }
     } else {
-        // New user
         const { error: dbError } = await supabase
             .from("users")
             .insert([{ 
@@ -245,7 +241,6 @@ app.post("/signup/send-code", async (req, res) => {
         }
     }
 
-    // Generate + send code (unchanged)
     const code = crypto.randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + CODE_EXPIRY).toISOString();
     
@@ -309,7 +304,6 @@ app.post("/signup/verify", async (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid verification code." });
     }
 
-    // ✅ Only set email_verified. is_verified stays false until KYC is approved.
     const { data: updatedRows, error: updateError } = await supabase
         .from("users")
         .update({ email_verified: true })
@@ -328,7 +322,6 @@ app.post("/signup/verify", async (req, res) => {
         fullName: verifiedUser?.full_name
     });
 
-    // Issue reset/onboarding token
     const resetToken = crypto.randomBytes(32).toString('hex');
     const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
@@ -367,7 +360,6 @@ app.post("/signup", async (req, res) => {
         return res.status(400).json({ success: false, message: "Email already exists." });
     }
 
-    // If unverified row exists, we still let it through (upsert-style)
     if (existingUser) {
         const { data, error } = await supabase
             .from("users")
@@ -396,8 +388,8 @@ app.post("/signup", async (req, res) => {
             country, 
             email: normalizedEmail, 
             password, 
-            is_verified: false,   // ✅ KYC not done
-            email_verified: true, // ✅ email verified via direct signup
+            is_verified: false,
+            email_verified: true,
             language: language || 'en',
             currency: currency || 'USD'
         }]) 
@@ -528,7 +520,6 @@ app.get("/user/:id", async (req, res) => {
         .select("*", { count: "exact", head: true })
         .eq("referred_by", refCode);
 
-    // ✅ CHANGED — also select `pnl` so we can sum net P&L
     const { data: txns } = await supabase
         .from("transactions")
         .select("type, amount, status, pnl")
@@ -536,7 +527,6 @@ app.get("/user/:id", async (req, res) => {
 
     let totalDeposit = 0;
     let totalWithdrawal = 0;
-    // ✅ NEW — total net P&L (only gains/losses, never stakes)
     let totalPL = 0;
 
     if (txns) {
@@ -545,7 +535,6 @@ app.get("/user/:id", async (req, res) => {
                 if (t.type === 'Deposit') totalDeposit += Number(t.amount || 0);
                 if (t.type === 'Withdrawal') totalWithdrawal += Number(t.amount || 0);
             }
-            // ✅ NEW — count only recorded net P&L
             if (t.pnl != null && (t.status === 'Closed' || t.status === 'Approved')) {
                 totalPL += Number(t.pnl);
             }
@@ -568,7 +557,6 @@ app.get("/user/:id", async (req, res) => {
             total_trade_display: formatMoney(cvt(data.total_trade)),
             total_deposit_display: formatMoney(cvt(totalDeposit)),
             total_withdrawal_display: formatMoney(cvt(totalWithdrawal)),
-            // ✅ NEW — net P&L fields the dashboard reads
             total_pnl: totalPL,
             total_pnl_display: formatMoney(cvt(totalPL)),
             btc_balance_display: formatMoney(cvt(data.btc_balance)),
@@ -576,6 +564,33 @@ app.get("/user/:id", async (req, res) => {
             usdt_balance_display: formatMoney(cvt(data.usdt_balance))
         }
     });
+});
+
+/* ---------------- GET USER EQUITY (MT5 LIVE) ---------------- */
+app.get("/user/:id/equity", async (req, res) => {
+    try {
+        const { data: user } = await supabase.from("users").select("balance").eq("id", req.params.id).single();
+        const { data: activeTrades } = await supabase.from("live_trades").select("*").eq("user_id", req.params.id).eq("status", "LIVE");
+
+        let usedMargin = 0;
+        let totalFloatingPnl = 0;
+        
+        if (activeTrades) {
+            activeTrades.forEach(t => {
+                usedMargin += Number(t.margin_locked || 0);
+                totalFloatingPnl += Number(t.floating_pnl || 0);
+            });
+        }
+
+        const balance = Number(user.balance || 0);
+        const equity = balance + totalFloatingPnl;
+        const freeMargin = equity - usedMargin;
+        const marginLevel = usedMargin > 0 ? (equity / usedMargin) * 100 : 0;
+
+        res.json({ success: true, balance, equity, usedMargin, freeMargin, marginLevel, floatingPnl: totalFloatingPnl });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
 });
 
 /* ---------------- FORGOT PASSWORD ---------------- */
@@ -2386,7 +2401,6 @@ const BINANCE_SYMBOLS = {
 
 let priceInterval = null;
 
-// Fetch prices from Binance's public mirror every 15 seconds
 function startPriceFeed() {
   if (priceInterval) clearInterval(priceInterval);
 
@@ -2407,7 +2421,7 @@ function startPriceFeed() {
   };
 
   fetchPrices();
-  priceInterval = setInterval(fetchPrices, 15000); // 15 seconds
+  priceInterval = setInterval(fetchPrices, 15000); 
 }
 
 startPriceFeed();
@@ -2416,18 +2430,19 @@ function getLivePrice(pair) { return livePrices[pair] ?? null; }
 
 app.get('/prices', (req, res) => res.json({ success: true, prices: livePrices }));
 
+// ==============================================================
+// ✅ MT5 START PACKAGE ROUTE (NO IMMEDIATE DEDUCTION)
+// ==============================================================
 app.post('/packages/start', async (req, res) => {
   try {
     const { user_id, package: pkgName, direction } = req.body;
     const dir = (direction || 'BUY').toUpperCase();
     
-    // Check if the package exists in our updated list
     const pkg = PACKAGES[pkgName];
     if (!pkg) {
       return res.status(400).json({ success: false, message: `Invalid package: ${pkgName}` });
     }
 
-    // Prevent duplicate LIVE trades for the same user
     const { data: activeTrade } = await supabase
       .from('live_trades')
       .select('id')
@@ -2443,24 +2458,33 @@ app.post('/packages/start', async (req, res) => {
     }
 
     const entryPrice = getLivePrice(pkg.pair);
-    
     if (entryPrice == null) {
       return res.status(503).json({ success: false, message: `Price for ${pkg.pair} not available yet. Please try again.` });
     }
 
-    const { data, error } = await supabase.rpc('start_live_trade', {
-      p_user_id: user_id, 
-      p_package: pkgName, 
-      p_pair: pkg.pair, 
-      p_direction: dir, 
-      p_amount: pkg.min_price, 
-      p_entry_price: entryPrice, 
-      p_duration_days: pkg.duration_days
-    });
+    const { data: user } = await supabase.from('users').select('balance').eq('id', user_id).single();
+    if (Number(user.balance) < pkg.min_price) {
+      return res.status(400).json({ success: false, message: 'Insufficient balance to lock as margin.' });
+    }
+
+    // Insert directly into live_trades (No RPC)
+    const { data, error } = await supabase.from('live_trades').insert([{
+      user_id,
+      package: pkgName,
+      pair: pkg.pair,
+      direction: dir,
+      amount: pkg.min_price,
+      entry_price: entryPrice,
+      duration_days: pkg.duration_days,
+      status: 'LIVE',
+      margin_locked: pkg.min_price,
+      floating_pnl: 0,
+      auto_close_threshold: -pkg.min_price, // MT5 Margin Call at 100% loss
+      started_at: new Date().toISOString()
+    }]).select().single();
     
-    if (error) return res.status(400).json({ success: false, message: error.message });
+    if (error) throw error;
     
-    // Ensure the trade object is fully returned to the frontend
     res.json({ success: true, trade: data });
   } catch (err) { 
     res.status(500).json({ success: false, message: err.message }); 
@@ -2475,9 +2499,9 @@ app.get('/packages/active/:user_id', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-/* ================================================================ */
-/* ✅ UPDATED: CLOSE ROUTE — now returns total_credit + new_balance */
-/* ================================================================ */
+// ==============================================================
+// ✅ MT5 CLOSE PACKAGE ROUTE (CREDITS ONLY PNL)
+// ==============================================================
 app.post('/packages/:id/close', async (req, res) => {
   try {
     const { data: trade, error: getErr } = await supabase
@@ -2502,45 +2526,108 @@ app.post('/packages/:id/close', async (req, res) => {
       });
     }
 
-    const { data, error } = await supabase.rpc('settle_live_trade', {
-      p_trade_id: trade.id,
-      p_exit_price: exitPrice
-    });
+    // MT5 P&L Math
+    const dir = trade.direction === 'SELL' ? -1 : 1;
+    const priceDiff = (exitPrice - Number(trade.entry_price)) * dir;
+    const pctChange = priceDiff / Number(trade.entry_price);
+    
+    let leverage = 500;
+    if (trade.pair.includes('XAU')) leverage = 1000;
+    if (trade.pair.includes('XAG')) leverage = 800;
+    if (trade.pair.includes('EUR')) leverage = 300;
+    
+    const realizedPnl = Number(trade.margin_locked) * (pctChange * leverage);
 
-    if (error) {
-      if (String(error.message || '').toLowerCase().includes('not found')) {
-        return res.status(409).json({
-          success: false,
-          message: 'This trade was already closed.'
-        });
-      }
-      return res.status(400).json({ success: false, message: error.message });
-    }
+    // Close the trade
+    const { data: closedTrade, error: closeErr } = await supabase.from('live_trades').update({
+      status: 'CLOSED',
+      settled_at: new Date().toISOString(),
+      realized_pnl: realizedPnl,
+      close_reason: 'manual'
+    }).eq('id', trade.id).select().single();
 
-    // The RPC now returns total_credit and new_balance as well
+    if (closeErr) throw closeErr;
+
+    // Credit ONLY P&L to user
+    const { data: user } = await supabase.from('users').select('balance').eq('id', trade.user_id).single();
+    const newBalance = Number(user.balance) + realizedPnl;
+    await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
+
+    // Insert into history
+    await supabase.from('transactions').insert([{
+      user_id: trade.user_id,
+      type: 'Trade Result',
+      amount: Math.abs(realizedPnl),
+      pnl: realizedPnl,
+      status: 'Approved',
+      description: `${trade.package} ${trade.direction} closed. P/L: ${realizedPnl >= 0 ? '+' : '-'}$${Math.abs(realizedPnl).toFixed(2)}`
+    }]);
+
     res.json({
       success: true,
-      trade: data,
-      credited: data?.total_credit ?? null,
-      new_balance: data?.new_balance ?? null
+      trade: closedTrade,
+      credited: realizedPnl,
+      new_balance: newBalance
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
+// ==============================================================
+// ✅ MT5 AUTO-CLOSE WATCHER (Runs every 5 seconds)
+// ==============================================================
 setInterval(async () => {
   try {
-    const { data: expired } = await supabase.from('live_trades').select('*').eq('status', 'LIVE').not('duration_days', 'is', null);
-    if (!expired) return;
-    for (const t of expired) {
-      if (Date.now() < new Date(t.started_at).getTime() + t.duration_days * 86400000) continue;
-      const exitPrice = getLivePrice(t.pair);
-      if (exitPrice) await supabase.rpc('settle_live_trade', { p_trade_id: t.id, p_exit_price: exitPrice });
-    }
-  } catch (err) {}
-}, 60 * 1000);
+    const { data: liveTrades } = await supabase.from('live_trades').select('*').eq('status', 'LIVE');
+    if (!liveTrades || liveTrades.length === 0) return;
 
+    for (const trade of liveTrades) {
+      const exitPrice = getLivePrice(trade.pair);
+      if (!exitPrice) continue;
+
+      const dir = trade.direction === 'SELL' ? -1 : 1;
+      const pctChange = ((exitPrice - Number(trade.entry_price)) * dir) / Number(trade.entry_price);
+      
+      let leverage = 500;
+      if (trade.pair.includes('XAU')) leverage = 1000;
+      if (trade.pair.includes('XAG')) leverage = 800;
+      if (trade.pair.includes('EUR')) leverage = 300;
+      
+      const floatingPnl = Number(trade.margin_locked) * (pctChange * leverage);
+
+      // Update floating P&L in DB
+      await supabase.from('live_trades').update({ floating_pnl: floatingPnl }).eq('id', trade.id);
+
+      // Check if it hits the auto-close threshold
+      if (floatingPnl <= Number(trade.auto_close_threshold)) {
+        console.log(`🚨 MARGIN CALL on Trade ${trade.id}. Closing...`);
+        
+        await supabase.from('live_trades').update({
+          status: 'CLOSED',
+          settled_at: new Date().toISOString(),
+          realized_pnl: floatingPnl,
+          close_reason: 'auto_margin'
+        }).eq('id', trade.id);
+
+        const { data: user } = await supabase.from('users').select('balance').eq('id', trade.user_id).single();
+        const newBalance = Number(user.balance) + floatingPnl;
+        await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
+
+        await supabase.from('transactions').insert([{
+          user_id: trade.user_id,
+          type: 'Trade Result',
+          amount: Math.abs(floatingPnl),
+          pnl: floatingPnl,
+          status: 'Approved',
+          description: `AUTO-CLOSE (Margin Call) on ${trade.package}. P/L: -$${Math.abs(floatingPnl).toFixed(2)}`
+        }]);
+      }
+    }
+  } catch (err) {
+    console.error('Watcher Error:', err);
+  }
+}, 5000);
 
 /* ---------------- ADMIN: VIEW USER TRADES ---------------- */
 app.get("/admin/trades", async (req, res) => {
@@ -2548,7 +2635,7 @@ app.get("/admin/trades", async (req, res) => {
         const { data, error } = await supabase
             .from("transactions")
             .select("*")
-            .in("type", ["Crypto", "Forex"])
+            .in("type", ["Crypto", "Forex", "Trade Result"])
             .order("created_at", { ascending: false })
             .limit(500);
 
@@ -2638,12 +2725,10 @@ app.get("/check-email/:email", async (req, res) => {
 
         if (error) throw error;
 
-        // Return true if the user exists AND their email is verified
         if (user && user.email_verified === true) {
             return res.json({ success: true, exists: true });
         }
 
-        // User doesn't exist, OR they exist but never verified their email
         return res.json({ success: true, exists: false });
 
     } catch (err) {
