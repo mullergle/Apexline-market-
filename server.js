@@ -528,19 +528,26 @@ app.get("/user/:id", async (req, res) => {
         .select("*", { count: "exact", head: true })
         .eq("referred_by", refCode);
 
+    // ✅ CHANGED — also select `pnl` so we can sum net P&L
     const { data: txns } = await supabase
         .from("transactions")
-        .select("type, amount, status")
+        .select("type, amount, status, pnl")
         .eq("user_id", req.params.id);
 
     let totalDeposit = 0;
     let totalWithdrawal = 0;
+    // ✅ NEW — total net P&L (only gains/losses, never stakes)
+    let totalPL = 0;
 
     if (txns) {
         txns.forEach(t => {
             if (t.status === 'Approved') {
                 if (t.type === 'Deposit') totalDeposit += Number(t.amount || 0);
                 if (t.type === 'Withdrawal') totalWithdrawal += Number(t.amount || 0);
+            }
+            // ✅ NEW — count only recorded net P&L
+            if (t.pnl != null && (t.status === 'Closed' || t.status === 'Approved')) {
+                totalPL += Number(t.pnl);
             }
         });
     }
@@ -561,6 +568,9 @@ app.get("/user/:id", async (req, res) => {
             total_trade_display: formatMoney(cvt(data.total_trade)),
             total_deposit_display: formatMoney(cvt(totalDeposit)),
             total_withdrawal_display: formatMoney(cvt(totalWithdrawal)),
+            // ✅ NEW — net P&L fields the dashboard reads
+            total_pnl: totalPL,
+            total_pnl_display: formatMoney(cvt(totalPL)),
             btc_balance_display: formatMoney(cvt(data.btc_balance)),
             eth_balance_display: formatMoney(cvt(data.eth_balance)),
             usdt_balance_display: formatMoney(cvt(data.usdt_balance))
@@ -2092,13 +2102,18 @@ app.post("/trade/close", async (req, res) => {
         const newBalance = Number(user.balance || 0) + payout;
         await supabase.from("users").update({ balance: newBalance }).eq("id", user_id);
 
-        // 3. Mark the original trade as "Closed" so the dashboard knows
+        // 3. ✅ CHANGED — Mark the original trade as "Closed" AND store the net P&L on it
         await supabase
             .from("transactions")
-            .update({ status: "Closed", description: `${trade.description} | P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}` })
+            .update({
+                status: "Closed",
+                pnl: netProfit, // ✅ NEW — pure gain/loss on the original stake
+                description: `${trade.description} | P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}`
+            })
             .eq("id", trade_id);
 
         // 4. Log the return payout as a new transaction
+        //    ✅ NOTE: no `pnl` on this row — this is a plain credit, not a P&L record
         await supabase
             .from("transactions")
             .insert([{
@@ -2209,6 +2224,12 @@ app.post("/copy-trade/execute", async (req, res) => {
             return res.status(500).json({ success: false, message: "Failed to create copy trade." });
         }
 
+        // ✅ NEW — link the Copy Out transaction to this copy_trades row so unfollow can update its pnl
+        await supabase
+            .from("transactions")
+            .update({ reference: copy.id })
+            .eq("id", txnData[0].id);
+
         res.json({ 
             success: true, 
             message: `You are now copying ${trader_name} with $${numericAmount.toFixed(2)}.`,
@@ -2260,6 +2281,14 @@ app.delete("/copy-trade/unfollow/:trader_name", async (req, res) => {
                 message: "Could not log the refund."
             });
         }
+
+        // ✅ NEW — store the net P&L on the original Copy Out transaction
+        await supabase
+            .from("transactions")
+            .update({ pnl: profit, status: "Closed" })
+            .eq("user_id", user_id)
+            .eq("type", "Copy Out")
+            .eq("reference", copy.id);
 
         const { data: user } = await supabase
             .from("users")
