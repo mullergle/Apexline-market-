@@ -2594,33 +2594,37 @@ setInterval(async () => {
       if (trade.pair.includes('XAG')) leverage = 800;
       if (trade.pair.includes('EUR')) leverage = 300;
       
-      const floatingPnl = Number(trade.margin_locked) * (pctChange * leverage);
+      let floatingPnl = Number(trade.margin_locked) * (pctChange * leverage);
 
       // Update floating P&L in DB
       await supabase.from('live_trades').update({ floating_pnl: floatingPnl }).eq('id', trade.id);
 
-      // Check if it hits the auto-close threshold
+      // Check if it hits the auto-close threshold (100% loss of margin)
       if (floatingPnl <= Number(trade.auto_close_threshold)) {
         console.log(`🚨 MARGIN CALL on Trade ${trade.id}. Closing...`);
+        
+        // ✅ FIX: Cap the loss at exactly the margin amount so balance never goes below 0
+        const realizedPnl = -Math.abs(Number(trade.margin_locked)); 
         
         await supabase.from('live_trades').update({
           status: 'CLOSED',
           settled_at: new Date().toISOString(),
-          realized_pnl: floatingPnl,
+          realized_pnl: realizedPnl,
           close_reason: 'auto_margin'
         }).eq('id', trade.id);
 
         const { data: user } = await supabase.from('users').select('balance').eq('id', trade.user_id).single();
-        const newBalance = Number(user.balance) + floatingPnl;
+        const newBalance = Number(user.balance) + realizedPnl;
         await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
 
+        // ✅ FIX: Log it as a NEGATIVE amount so the UI colors it red
         await supabase.from('transactions').insert([{
           user_id: trade.user_id,
           type: 'Trade Result',
-          amount: Math.abs(floatingPnl),
-          pnl: floatingPnl,
+          amount: realizedPnl, // Negative
+          pnl: realizedPnl,    // Negative
           status: 'Approved',
-          description: `AUTO-CLOSE (Margin Call) on ${trade.package}. P/L: -$${Math.abs(floatingPnl).toFixed(2)}`
+          description: `AUTO-CLOSE (Stop Out) on ${trade.package}. P/L: -$${Math.abs(realizedPnl).toFixed(2)}`
         }]);
       }
     }
