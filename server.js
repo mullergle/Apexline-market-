@@ -48,6 +48,25 @@ function cleanNumber(v) {
     return isNaN(n) ? v : n;
 }
 
+/* ---------------- MARKET HOURS CHECKER ---------------- */
+function isMarketOpen(pair) {
+  // Only apply weekend closures to EUR/USD and XAU/USD (Gold)
+  if (pair !== 'EUR/USD' && pair !== 'XAU/USD') return true;
+
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 = Sunday, 5 = Friday, 6 = Saturday
+  const hours = now.getUTCHours();
+
+  // Friday 22:00 (10 PM) UTC
+  if (day === 5 && hours >= 22) return false;
+  // All day Saturday
+  if (day === 6) return false;
+  // Sunday before 22:00 (10 PM) UTC
+  if (day === 0 && hours < 22) return false;
+
+  return true;
+}
+
 /* ---------------- EMAIL TEMPLATES ---------------- */
 async function sendWelcomeEmail({ to, fullName }) {
     const firstName = (fullName || "there").trim().split(" ")[0];
@@ -2386,18 +2405,18 @@ const livePrices = Object.create(null);
 
 const PACKAGES = {
   'EUR/USD': { min_price: 200,   duration_days: 1 / 24,    pips: 100,  pair: 'EUR/USD' },
-  // ✅ FIX: Changed 1440 to 24 to make it 2.25 hours instead of 2.25 minutes
   'BTC/USD': { min_price: 500,   duration_days: 2.25 / 24, pips: 230, pair: 'BTC/USD' },
   'XAU/USD': { min_price: 1000,  duration_days: 4 / 24,    pips: 470,  pair: 'XAU/USD' },
-  'XAG/USD': { min_price: 5000,  duration_days: 10 / 24,   pips: 1000, pair: 'XAG/USD' }
+  'US30':    { min_price: 5000,  duration_days: 10 / 24,   pips: 1000, pair: 'US30' }
 };
 
 const BINANCE_SYMBOLS = {
   'BTC/USD': 'BTCUSDT',
   'ETH/USD': 'ETHUSDT',
   'SOL/USD': 'SOLUSDT',
-  'XAU/USD': 'PAXGUSDT', // Using PAXG as a proxy for Gold
-  'EUR/USD': 'EURUSDT'   // Using EURUSDT from Binance
+  'XAU/USD': 'PAXGUSDT',
+  'EUR/USD': 'EURUSDT',
+  'US30': 'US30' 
 };
 
 let priceInterval = null;
@@ -2408,6 +2427,11 @@ function startPriceFeed() {
   const fetchPrices = async () => {
     try {
       const promises = Object.entries(BINANCE_SYMBOLS).map(async ([pair, symbol]) => {
+        if (symbol === 'US30') {
+             // Mock US30 price for now, or connect to a real API
+            if (!livePrices['US30']) livePrices['US30'] = 39000;
+            return;
+        }
         const response = await fetch(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${symbol}`);
         if (response.ok) {
           const data = await response.json();
@@ -2431,9 +2455,6 @@ function getLivePrice(pair) { return livePrices[pair] ?? null; }
 
 app.get('/prices', (req, res) => res.json({ success: true, prices: livePrices }));
 
-// ==============================================================
-// ✅ MT5 START PACKAGE ROUTE (NO IMMEDIATE DEDUCTION)
-// ==============================================================
 app.post('/packages/start', async (req, res) => {
   try {
     const { user_id, package: pkgName, direction } = req.body;
@@ -2442,6 +2463,14 @@ app.post('/packages/start', async (req, res) => {
     const pkg = PACKAGES[pkgName];
     if (!pkg) {
       return res.status(400).json({ success: false, message: `Invalid package: ${pkgName}` });
+    }
+
+    // ✅ NEW: Check Market Hours
+    if (!isMarketOpen(pkgName)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Market is closed for the weekend. It will reopen Sunday at 10 PM.' 
+      });
     }
 
     const { data: activeTrade } = await supabase
@@ -2468,7 +2497,6 @@ app.post('/packages/start', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Insufficient balance to lock as margin.' });
     }
 
-    // Insert directly into live_trades (No RPC)
     const { data, error } = await supabase.from('live_trades').insert([{
       user_id,
       package: pkgName,
@@ -2480,7 +2508,7 @@ app.post('/packages/start', async (req, res) => {
       status: 'LIVE',
       margin_locked: pkg.min_price,
       floating_pnl: 0,
-      auto_close_threshold: -pkg.min_price, // MT5 Margin Call at 100% loss
+      auto_close_threshold: -pkg.min_price,
       started_at: new Date().toISOString()
     }]).select().single();
     
@@ -2500,9 +2528,6 @@ app.get('/packages/active/:user_id', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// ==============================================================
-// ✅ MT5 CLOSE PACKAGE ROUTE (CREDITS ONLY PNL)
-// ==============================================================
 app.post('/packages/:id/close', async (req, res) => {
   try {
     const { data: trade, error: getErr } = await supabase
@@ -2527,19 +2552,17 @@ app.post('/packages/:id/close', async (req, res) => {
       });
     }
 
-    // MT5 P&L Math
     const dir = trade.direction === 'SELL' ? -1 : 1;
     const priceDiff = (exitPrice - Number(trade.entry_price)) * dir;
     const pctChange = priceDiff / Number(trade.entry_price);
     
     let leverage = 500;
     if (trade.pair.includes('XAU')) leverage = 1000;
-    if (trade.pair.includes('XAG')) leverage = 800;
+    if (trade.pair.includes('US30')) leverage = 800;
     if (trade.pair.includes('EUR')) leverage = 300;
     
     const realizedPnl = Number(trade.margin_locked) * (pctChange * leverage);
 
-    // Close the trade
     const { data: closedTrade, error: closeErr } = await supabase.from('live_trades').update({
       status: 'CLOSED',
       settled_at: new Date().toISOString(),
@@ -2549,17 +2572,14 @@ app.post('/packages/:id/close', async (req, res) => {
 
     if (closeErr) throw closeErr;
 
-    // Credit ONLY P&L to user
     const { data: user } = await supabase.from('users').select('balance').eq('id', trade.user_id).single();
     const newBalance = Number(user.balance) + realizedPnl;
     await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
 
-    // Insert into history
-    // Find this block inside app.post('/packages/:id/close'):
     await supabase.from('transactions').insert([{
       user_id: trade.user_id,
       type: 'Trade Result',
-      amount: realizedPnl, // ✅ CHANGED: Removed Math.abs() so losses stay negative
+      amount: realizedPnl,
       pnl: realizedPnl,
       status: 'Approved',
       description: `${trade.package} ${trade.direction} closed. P/L: ${realizedPnl >= 0 ? '+' : '-'}$${Math.abs(realizedPnl).toFixed(2)}`
@@ -2576,9 +2596,6 @@ app.post('/packages/:id/close', async (req, res) => {
   }
 });
 
-// ==============================================================
-// ✅ MT5 AUTO-CLOSE WATCHER (Runs every 5 seconds)
-// ==============================================================
 setInterval(async () => {
   try {
     const { data: liveTrades } = await supabase.from('live_trades').select('*').eq('status', 'LIVE');
@@ -2593,19 +2610,16 @@ setInterval(async () => {
       
       let leverage = 500;
       if (trade.pair.includes('XAU')) leverage = 1000;
-      if (trade.pair.includes('XAG')) leverage = 800;
+      if (trade.pair.includes('US30')) leverage = 800;
       if (trade.pair.includes('EUR')) leverage = 300;
       
       let floatingPnl = Number(trade.margin_locked) * (pctChange * leverage);
 
-      // Update floating P&L in DB
       await supabase.from('live_trades').update({ floating_pnl: floatingPnl }).eq('id', trade.id);
 
-      // Check if it hits the auto-close threshold (100% loss of margin)
       if (floatingPnl <= Number(trade.auto_close_threshold)) {
         console.log(`🚨 MARGIN CALL on Trade ${trade.id}. Closing...`);
         
-        // ✅ FIX: Cap the loss at exactly the margin amount so balance never goes below 0
         const realizedPnl = -Math.abs(Number(trade.margin_locked)); 
         
         await supabase.from('live_trades').update({
@@ -2619,12 +2633,11 @@ setInterval(async () => {
         const newBalance = Number(user.balance) + realizedPnl;
         await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
 
-        // ✅ FIX: Log it as a NEGATIVE amount so the UI colors it red
         await supabase.from('transactions').insert([{
           user_id: trade.user_id,
           type: 'Trade Result',
-          amount: realizedPnl, // Negative
-          pnl: realizedPnl,    // Negative
+          amount: realizedPnl,
+          pnl: realizedPnl,
           status: 'Approved',
           description: `AUTO-CLOSE (Stop Out) on ${trade.package}. P/L: -$${Math.abs(realizedPnl).toFixed(2)}`
         }]);
@@ -2635,32 +2648,26 @@ setInterval(async () => {
   }
 }, 5000);
 
-// ==============================================================
-// ✅ NEW: MT5 EXPIRY WATCHER (Runs every 5 seconds)
-// Closes trades immediately when their duration ends.
-// ==============================================================
+// ✅ NEW: EXPIRY WATCHER
 setInterval(async () => {
   try {
     const { data: expired } = await supabase.from('live_trades').select('*').eq('status', 'LIVE').not('duration_days', 'is', null);
     if (!expired || expired.length === 0) return;
 
     for (const t of expired) {
-      // Check if time has expired
       if (Date.now() < new Date(t.started_at).getTime() + t.duration_days * 86400000) continue;
       
       const exitPrice = getLivePrice(t.pair);
       if (!exitPrice) continue;
 
-      // Calculate P&L at expiry
       const dir = t.direction === 'SELL' ? -1 : 1;
       const pctChange = ((exitPrice - Number(t.entry_price)) * dir) / Number(t.entry_price);
       let leverage = 500;
       if (t.pair.includes('XAU')) leverage = 1000;
-      if (t.pair.includes('XAG')) leverage = 800;
+      if (t.pair.includes('US30')) leverage = 800;
       if (t.pair.includes('EUR')) leverage = 300;
       const realizedPnl = Number(t.margin_locked) * (pctChange * leverage);
 
-      // Close the trade
       await supabase.from('live_trades').update({
         status: 'CLOSED',
         settled_at: new Date().toISOString(),
@@ -2668,12 +2675,10 @@ setInterval(async () => {
         close_reason: 'expired'
       }).eq('id', t.id);
 
-      // Credit ONLY the P&L back to user
       const { data: user } = await supabase.from('users').select('balance').eq('id', t.user_id).single();
       const newBalance = Number(user.balance) + realizedPnl;
       await supabase.from('users').update({ balance: newBalance }).eq('id', t.user_id);
 
-      // Log the result
       await supabase.from('transactions').insert([{
         user_id: t.user_id,
         type: 'Trade Result',
@@ -2686,7 +2691,7 @@ setInterval(async () => {
   } catch (err) {
     console.error('Expiry Watcher Error:', err);
   }
-}, 5000); // ✅ Runs every 5 seconds
+}, 5000);
 
 /* ---------------- ADMIN: VIEW USER TRADES ---------------- */
 app.get("/admin/trades", async (req, res) => {
