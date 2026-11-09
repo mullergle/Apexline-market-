@@ -2334,6 +2334,21 @@ app.post('/packages/start', async (req, res) => {
       return res.status(400).json({ success: false, message: `Invalid package: ${pkgName}` });
     }
 
+    // Prevent duplicate LIVE trades for the same user
+    const { data: activeTrade } = await supabase
+      .from('live_trades')
+      .select('id')
+      .eq('user_id', user_id)
+      .eq('status', 'LIVE')
+      .maybeSingle();
+
+    if (activeTrade) {
+      return res.status(400).json({
+        success: false,
+        message: 'You already have a live trade running. Please close it first.'
+      });
+    }
+
     const entryPrice = getLivePrice(pkg.pair);
     
     if (entryPrice == null) {
@@ -2367,15 +2382,58 @@ app.get('/packages/active/:user_id', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+/* ================================================================ */
+/* ✅ UPDATED: CLOSE ROUTE — now returns total_credit + new_balance */
+/* ================================================================ */
 app.post('/packages/:id/close', async (req, res) => {
   try {
-    const { data: trade, error: getErr } = await supabase.from('live_trades').select('*').eq('id', req.params.id).eq('status', 'LIVE').single();
-    if (getErr || !trade) return res.status(404).json({ success: false, message: 'Trade not found.' });
+    const { data: trade, error: getErr } = await supabase
+      .from('live_trades')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('status', 'LIVE')
+      .single();
+
+    if (getErr || !trade) {
+      return res.status(404).json({
+        success: false,
+        message: 'Trade not found or already settled.'
+      });
+    }
+
     const exitPrice = getLivePrice(trade.pair);
-    const { data, error } = await supabase.rpc('settle_live_trade', { p_trade_id: trade.id, p_exit_price: exitPrice });
-    if (error) return res.status(400).json({ success: false, message: error.message });
-    res.json({ success: true, trade: data });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+    if (exitPrice == null) {
+      return res.status(503).json({
+        success: false,
+        message: 'Live price unavailable. Please try again in a moment.'
+      });
+    }
+
+    const { data, error } = await supabase.rpc('settle_live_trade', {
+      p_trade_id: trade.id,
+      p_exit_price: exitPrice
+    });
+
+    if (error) {
+      if (String(error.message || '').toLowerCase().includes('not found')) {
+        return res.status(409).json({
+          success: false,
+          message: 'This trade was already closed.'
+        });
+      }
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    // The RPC now returns total_credit and new_balance as well
+    res.json({
+      success: true,
+      trade: data,
+      credited: data?.total_credit ?? null,
+      new_balance: data?.new_balance ?? null
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 setInterval(async () => {
