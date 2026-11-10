@@ -361,23 +361,46 @@ app.post("/signup/verify", async (req, res) => {
 
 /* ---------------- SIGNUP (DIRECT) ---------------- */
 app.post("/signup", async (req, res) => {
-    const { fullName, phone, country, email, password, language, currency } = req.body;
-
-    if (!fullName || !phone || !country || !email || !password) {
-        return res.status(400).json({ success: false, message: "All fields are required." });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
+    // ... existing validation ...
 
     const { data: existingUser } = await supabase
         .from("users")
-        .select("id, email_verified")
+        .select("id, email_verified, password")
         .eq("email", normalizedEmail)
-        .single();
+        .maybeSingle();
 
-    if (existingUser && existingUser.email_verified === true) {
-        return res.status(400).json({ success: false, message: "Email already exists." });
+    // BLOCK ALL existing emails completely — no overwriting
+    if (existingUser) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "This email is already registered. Please log in instead." 
+        });
     }
+
+    // Only create if the email does not exist
+    const { data, error } = await supabase
+        .from("users")
+        .insert([{ 
+            full_name: fullName, 
+            phone, 
+            country, 
+            email: normalizedEmail, 
+            password, 
+            is_verified: false,
+            email_verified: false, // Start false, must verify via email
+            language: language || 'en',
+            currency: currency || 'USD'
+        }]) 
+        .select();
+
+    if (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+
+    await sendWelcomeEmail({ to: normalizedEmail, fullName });
+
+    res.json({ success: true, message: "Account created. Please verify your email." });
+});
 
     if (existingUser) {
         const { data, error } = await supabase
