@@ -361,15 +361,21 @@ app.post("/signup/verify", async (req, res) => {
 
 /* ---------------- SIGNUP (DIRECT) ---------------- */
 app.post("/signup", async (req, res) => {
-    // ... existing validation ...
+    const { fullName, phone, country, email, password, language, currency } = req.body;
 
+    if (!fullName || !phone || !country || !email || !password) {
+        return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // ✅ FIX 1: Block ANY existing email from being registered again
     const { data: existingUser } = await supabase
         .from("users")
-        .select("id, email_verified, password")
+        .select("id")
         .eq("email", normalizedEmail)
         .maybeSingle();
 
-    // BLOCK ALL existing emails completely — no overwriting
     if (existingUser) {
         return res.status(400).json({ 
             success: false, 
@@ -377,51 +383,7 @@ app.post("/signup", async (req, res) => {
         });
     }
 
-    // Only create if the email does not exist
-    const { data, error } = await supabase
-        .from("users")
-        .insert([{ 
-            full_name: fullName, 
-            phone, 
-            country, 
-            email: normalizedEmail, 
-            password, 
-            is_verified: false,
-            email_verified: false, // Start false, must verify via email
-            language: language || 'en',
-            currency: currency || 'USD'
-        }]) 
-        .select();
-
-    if (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-
-    await sendWelcomeEmail({ to: normalizedEmail, fullName });
-
-    res.json({ success: true, message: "Account created. Please verify your email." });
-});
-
-    if (existingUser) {
-        const { data, error } = await supabase
-            .from("users")
-            .update({
-                full_name: fullName,
-                phone,
-                country,
-                password,
-                email_verified: true,
-                language: language || 'en',
-                currency: currency || 'USD'
-            })
-            .eq("id", existingUser.id)
-            .select();
-
-        if (error) return res.status(500).json({ success: false, message: error.message });
-        await sendWelcomeEmail({ to: normalizedEmail, fullName });
-        return res.json({ success: true, message: "Account created.", user: data });
-    }
-
+    // ✅ FIX 2: Insert the new user safely
     const { data, error } = await supabase
         .from("users")
         .insert([{ 
@@ -445,6 +407,9 @@ app.post("/signup", async (req, res) => {
 
     res.json({ success: true, message: "Account created.", user: data });
 });
+
+
+
 
 /* ---------------- GOOGLE LOGIN ---------------- */
 app.post("/login/google", async (req, res) => {
