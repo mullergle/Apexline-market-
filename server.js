@@ -2187,11 +2187,22 @@ app.post("/copy-trade/execute", async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid copy amount." });
         }
 
+        // ✅ NEW: Enforce $10,000 Minimum
+        const MIN_COPY_AMOUNT = 10000;
+        if (numericAmount < MIN_COPY_AMOUNT) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `The minimum amount to copy a trader is $10,000.00.` 
+            });
+        }
+
         const { data: user, error: userErr } = await supabase
             .from("users")
             .select("balance, full_name, email")
             .eq("id", user_id)
             .single();
+            
+        
 
         if (userErr || !user) {
             return res.status(404).json({ success: false, message: "User not found." });
