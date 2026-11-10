@@ -994,7 +994,12 @@ app.get("/admin/user/:id", async (req, res) => {
 /* ---------------- ADMIN UPDATE USER ---------------- */
 app.put("/admin/user/:id", async (req, res) => {
     const userId = req.params.id;
-    const { full_name, phone, balance, total_trade, assets, active_assets, btc_balance, eth_balance, usdt_balance, is_suspended, txn_type } = req.body;
+    const { 
+        full_name, phone, balance, total_trade, assets, active_assets, 
+        btc_balance, eth_balance, usdt_balance, is_suspended, txn_type,
+        trade_id, profit_loss, trade_outcome // ✅ NEW: Trade settlement data
+    } = req.body;
+
     const { data: existingUser, error: fetchError } = await supabase
         .from("users")
         .select("balance, full_name, phone")
@@ -1035,24 +1040,41 @@ app.put("/admin/user/:id", async (req, res) => {
 
     if (error) return res.status(500).json({ success: false, message: error.message });
 
-        if (difference !== 0) {
+    if (difference !== 0) {
         const isCredit = difference > 0;
         const absoluteAmount = Math.abs(difference);
+        
+        // ✅ NEW: If this is a trade settlement, log it as a Trade Result with P&L
+        const isTradeSettlement = trade_id && profit_loss !== undefined;
+        
+        let finalType = txn_type || (isCredit ? "Deposit" : "Withdrawal");
+        let finalDesc = txn_type || (isCredit ? 'Deposit' : 'Withdrawal');
+        let finalPnl = null;
+
+        if (isTradeSettlement) {
+            finalType = 'Trade Result';
+            finalPnl = Number(profit_loss);
+            finalDesc = `Trade settled from admin. P/L: ${finalPnl >= 0 ? '+' : '-'}$${Math.abs(finalPnl).toFixed(2)}`;
+        }
+
         const { error: txnError } = await supabase
             .from("transactions")
             .insert([{
                 user_id: userId,
-                type: txn_type || (isCredit ? "Deposit" : "Withdrawal"),
+                type: finalType,
                 amount: absoluteAmount,
+                pnl: finalPnl, // ✅ Saves the P&L for the dashboard
                 status: "Approved",
-                description: txn_type || (isCredit ? 'Deposit' : 'Withdrawal')
+                description: finalDesc
             }]);
+            
         if (txnError) console.log("Transaction log error:", txnError);
     }
 
-
     res.json({ success: true, message: "User updated successfully", user: data });
 });
+
+
 
 app.put("/admin/user-assets/:id", async (req, res) => {
     const { btc_balance, eth_balance, usdt_balance } = req.body;
