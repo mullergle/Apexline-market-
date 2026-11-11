@@ -411,63 +411,7 @@ app.post("/signup", async (req, res) => {
 
 
 
-/* ---------------- GOOGLE LOGIN ---------------- */
-app.post("/login/google", async (req, res) => {
-    const { email, fullName } = req.body;
 
-    if (!email) return res.status(400).json({ success: false, message: "Email is required." });
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    try {
-        let { data: user, error } = await supabase
-            .from("users")
-            .select("*")
-            .eq("email", normalizedEmail)
-            .maybeSingle();
-
-        if (error) throw error;
-
-        if (!user) {
-            const { data: newUser, error: insertError } = await supabase
-                .from("users")
-                .insert([{
-                    full_name: fullName || email.split('@')[0],
-                    email: normalizedEmail,
-                    password: 'google_oauth_' + Date.now(),
-                    phone: "",   
-                    country: "", 
-                    is_verified: false, 
-                    email_verified: true,  
-                    is_admin: false,       
-                    is_suspended: false,
-                    balance: 0
-                }])
-                .select()
-                .single();
-
-            if (insertError) {
-                console.error("❌ GOOGLE INSERT ERROR:", insertError);
-                return res.status(500).json({ success: false, message: insertError.message });
-            }
-            user = newUser;
-        } else {
-            const updates = {};
-            if (user.is_admin === null) updates.is_admin = false;
-            if (user.is_suspended === null) updates.is_suspended = false;
-
-            if (Object.keys(updates).length > 0) {
-                await supabase.from("users").update(updates).eq("id", user.id);
-            }
-        }
-
-        res.json({ success: true, user: user, token: "google-token" });
-
-    } catch (error) {
-        console.error("❌ Google Login Error:", error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
 
 /* ---------------- LOGIN ---------------- */
 app.post("/login", async (req, res) => {
