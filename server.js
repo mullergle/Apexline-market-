@@ -75,7 +75,7 @@ async function sendWelcomeEmail({ to, fullName }) {
     <div style="font-family:Arial,sans-serif;background:#f9fafb;padding:32px 16px;">
         <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="background:#08090d;padding:28px 32px;">
-                <h1 style="color:#ffffff;font-size:20px;margin:0;">Nexora Trade Markets</h1>
+                <h1 style="color:#ffffff;font-size:20px;margin:0;">Nexora</h1>
             </div>
             <div style="padding:32px;">
                 <h2 style="color:#08090d;font-size:22px;margin:0 0 16px;">Welcome, ${firstName}!</h2>
@@ -95,7 +95,7 @@ async function sendWelcomeEmail({ to, fullName }) {
                 </p>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0;">
                     Welcome aboard,<br/>
-                    <strong>The Nexora Trade Markets Team</strong>
+                    <strong>The Nexora Team</strong>
                 </p>
             </div>
             <div style="background:#f3f4f6;padding:16px 32px;text-align:center;">
@@ -110,7 +110,7 @@ async function sendWelcomeEmail({ to, fullName }) {
         const { error } = await resend.emails.send({
             from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to,
-            subject: "Welcome to Nexora Trade Markets — Your Account Is Verified",
+            subject: "Welcome to Nexora — Your Account Is Verified",
             html
         });
 
@@ -124,13 +124,19 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
     const firstName = (fullName || "there").trim().split(" ")[0];
     const accentColor = isError ? "#f23645" : "#1ebba3";
 
+    // ✅ FIXED: Clean subject line. Do not duplicate brand name here.
+    const subject = status 
+        ? `${title}: ${status}` 
+        : title;
+
     const html = `
     <div style="font-family:Arial,sans-serif;background:#f9fafb;padding:32px 16px;">
         <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="background:#08090d;padding:28px 32px;">
-                <h1 style="color:#ffffff;font-size:20px;margin:0;">Nexora Trade Markets</h1>
+                <h1 style="color:#ffffff;font-size:20px;margin:0;">Nexora</h1>
             </div>
             <div style="padding:32px;">
+                <!-- ✅ FIXED: H2 Title (The clean action) -->
                 <h2 style="color:#08090d;font-size:22px;margin:0 0 16px;">${title}</h2>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0 0 16px;">
                     Hi ${firstName},
@@ -154,7 +160,7 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
                 </div>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0;">
                     Best regards,<br/>
-                    <strong>The Nexora Trade Markets Team</strong>
+                    <strong>The Nexora Team</strong>
                 </p>
             </div>
             <div style="background:#f3f4f6;padding:16px 32px;text-align:center;">
@@ -169,7 +175,7 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
         const { error } = await resend.emails.send({
             from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to,
-            subject: title,
+            subject: subject,
             html
         });
         if (error) console.error("❌ Notification email failed:", error);
@@ -273,9 +279,9 @@ app.post("/signup/send-code", async (req, res) => {
         const { data, error } = await resend.emails.send({
             from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to: normalizedEmail,
-            subject: "Verify your Nexora Trade Markets account",
+            subject: "Your Verification Code",
             html: `
-                <h2>Welcome to Nexora Trade Markets</h2>
+                <h2>Welcome to Nexora</h2>
                 <p>Your verification code is:</p>
                 <h1>${code}</h1>
                 <p>This code expires in 10 minutes.</p>
@@ -638,9 +644,9 @@ app.post("/forgot-password", async (req, res) => {
         const { data, error } = await resend.emails.send({
             from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to: email,
-            subject: "Nexora Trade Markets Password Reset Code",
+            subject: "Password Reset Code",
             html: `
-                <h2>Nexora Trade Markets Verification</h2>
+                <h2>Nexora Password Reset</h2>
                 <p>Your verification code is:</p>
                 <h1>${code}</h1>
                 <p>This code expires in 10 minutes.</p>
@@ -798,7 +804,7 @@ app.post("/withdraw/send-code", async (req, res) => {
         const { data, error } = await resend.emails.send({
             from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to: email,
-            subject: "Nexora Trade Markets Withdrawal Verification",
+            subject: "Withdrawal Verification Code",
             html: `
                 <h2>Withdrawal Verification</h2>
                 <p>Your withdrawal verification code is:</p>
@@ -1299,7 +1305,7 @@ app.put("/admin/withdrawals/:id/approve", async (req, res) => {
         await sendNotificationEmail({
             to: user.email,
             fullName: user.full_name,
-            title: "Withdrawal Approved",
+            title: "Withdrawal Processed", // <-- Changed to cleaner title
             message: "Your withdrawal request has been successfully processed and sent to your wallet.",
             amount: withdrawal.amount,
             status: "Approved",
@@ -1476,7 +1482,7 @@ app.put("/admin/deposits/:id/approve", async (req, res) => {
         await sendNotificationEmail({
             to: user.email,
             fullName: user.full_name,
-            title: "Deposit Approved",
+            title: "Deposit Successful", // <-- Changed to cleaner title
             message: "Great news! Your deposit has been verified and the funds are now available in your account.",
             amount: deposit.amount,
             status: "Approved",
@@ -2000,12 +2006,12 @@ app.post("/admin/support/messages", async (req, res) => {
                 await resend.emails.send({
                     from: "Nexora Trade Markets Support <support@nexoratrademarkets.cfd>",
                     to: user.email,
-                    subject: "You have a new message from Nexora Trade Markets Support",
+                    subject: "New Message from Support", // <-- Changed to cleaner title
                     html: `
                         <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#f9fafb;">
                             <div style="background:#fff;border-radius:12px;padding:32px;">
                                 <h2 style="color:#08090d;margin:0 0 8px;">Hi ${(user.full_name || "there").split(" ")[0]},</h2>
-                                <p style="color:#5b6473;">You have a new message from Nexora Trade Markets Support:</p>
+                                <p style="color:#5b6473;">You have a new message from Support:</p>
                                 <div style="background:#f3f4f6;border-left:3px solid #ff3b5c;padding:16px;border-radius:8px;">
                                     <p style="color:#08090d;margin:0;white-space:pre-wrap;">${message}</p>
                                 </div>
