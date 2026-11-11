@@ -75,12 +75,12 @@ async function sendWelcomeEmail({ to, fullName }) {
     <div style="font-family:Arial,sans-serif;background:#f9fafb;padding:32px 16px;">
         <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="background:#08090d;padding:28px 32px;">
-                <h1 style="color:#ffffff;font-size:20px;margin:0;">Ledger Smart Market</h1>
+                <h1 style="color:#ffffff;font-size:20px;margin:0;">Nexora</h1>
             </div>
             <div style="padding:32px;">
                 <h2 style="color:#08090d;font-size:22px;margin:0 0 16px;">Welcome, ${firstName}!</h2>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0 0 16px;">
-                    Thank you for joining <strong>Ledger Smart Market</strong>. Your email address has been successfully verified, and your account is now fully activated.
+                    Thank you for joining <strong>Nexora Trade Markets</strong>. Your email address has been successfully verified, and your account is now fully activated.
                 </p>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0 0 16px;">
                     You can now access your dashboard to manage deposits, track withdrawals, monitor your portfolio, and communicate securely with our support team.
@@ -95,7 +95,7 @@ async function sendWelcomeEmail({ to, fullName }) {
                 </p>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0;">
                     Welcome aboard,<br/>
-                    <strong>The Ledger Team</strong>
+                    <strong>The Nexora Team</strong>
                 </p>
             </div>
             <div style="background:#f3f4f6;padding:16px 32px;text-align:center;">
@@ -108,9 +108,9 @@ async function sendWelcomeEmail({ to, fullName }) {
 
     try {
         const { error } = await resend.emails.send({
-            from: "Ledger Smart Market <noreply@nexoratrademarkets.cfd>",
+            from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to,
-            subject: "Welcome to Ledger — Your Account Is Verified",
+            subject: "Welcome to Nexora — Your Account Is Verified",
             html
         });
 
@@ -124,6 +124,7 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
     const firstName = (fullName || "there").trim().split(" ")[0];
     const accentColor = isError ? "#f23645" : "#1ebba3";
 
+    // ✅ FIXED: Clean subject line. Do not duplicate brand name here.
     const subject = status 
         ? `${title}: ${status}` 
         : title;
@@ -132,9 +133,10 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
     <div style="font-family:Arial,sans-serif;background:#f9fafb;padding:32px 16px;">
         <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="background:#08090d;padding:28px 32px;">
-                <h1 style="color:#ffffff;font-size:20px;margin:0;">Ledger Smart Market</h1>
+                <h1 style="color:#ffffff;font-size:20px;margin:0;">Nexora</h1>
             </div>
             <div style="padding:32px;">
+                <!-- ✅ FIXED: H2 Title (The clean action) -->
                 <h2 style="color:#08090d;font-size:22px;margin:0 0 16px;">${title}</h2>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0 0 16px;">
                     Hi ${firstName},
@@ -158,7 +160,7 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
                 </div>
                 <p style="color:#5b6473;font-size:15px;line-height:1.6;margin:0;">
                     Best regards,<br/>
-                    <strong>The Ledger Team</strong>
+                    <strong>The Nexora Team</strong>
                 </p>
             </div>
             <div style="background:#f3f4f6;padding:16px 32px;text-align:center;">
@@ -171,7 +173,7 @@ async function sendNotificationEmail({ to, fullName, title, message, amount = nu
 
     try {
         const { error } = await resend.emails.send({
-            from: "Ledger Smart Market <noreply@nexoratrademarkets.cfd>",
+            from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to,
             subject: subject,
             html
@@ -275,11 +277,11 @@ app.post("/signup/send-code", async (req, res) => {
 
     try {
         const { data, error } = await resend.emails.send({
-            from: "Ledger Smart Market <noreply@nexoratrademarkets.cfd>",
+            from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to: normalizedEmail,
             subject: "Your Verification Code",
             html: `
-                <h2>Welcome to Ledger</h2>
+                <h2>Welcome to Nexora</h2>
                 <p>Your verification code is:</p>
                 <h1>${code}</h1>
                 <p>This code expires in 10 minutes.</p>
@@ -373,6 +375,7 @@ app.post("/signup", async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
+    // ✅ FIX 1: Block ANY existing email from being registered again
     const { data: existingUser } = await supabase
         .from("users")
         .select("id")
@@ -386,6 +389,7 @@ app.post("/signup", async (req, res) => {
         });
     }
 
+    // ✅ FIX 2: Insert the new user safely
     const { data, error } = await supabase
         .from("users")
         .insert([{ 
@@ -409,6 +413,8 @@ app.post("/signup", async (req, res) => {
 
     res.json({ success: true, message: "Account created.", user: data });
 });
+
+
 
 
 /* ---------------- GOOGLE LOGIN ---------------- */
@@ -504,7 +510,7 @@ app.post("/login", async (req, res) => {
     });
 });
 
-/* ---------------- GET USER ---------------- */
+/* ---------------- GET USER (UPDATED FOR CURRENCY) ---------------- */
 app.get("/user/:id", async (req, res) => {
     const { data, error } = await supabase
         .from("users")
@@ -573,7 +579,7 @@ app.get("/user/:id", async (req, res) => {
     });
 });
 
-/* ---------------- GET USER EQUITY ---------------- */
+/* ---------------- GET USER EQUITY (MT5 LIVE) ---------------- */
 app.get("/user/:id/equity", async (req, res) => {
     try {
         const { data: user } = await supabase.from("users").select("balance").eq("id", req.params.id).single();
@@ -636,11 +642,11 @@ app.post("/forgot-password", async (req, res) => {
 
     try {
         const { data, error } = await resend.emails.send({
-            from: "Ledger Smart Market <noreply@nexoratrademarkets.cfd>",
+            from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to: email,
             subject: "Password Reset Code",
             html: `
-                <h2>Ledger Password Reset</h2>
+                <h2>Nexora Password Reset</h2>
                 <p>Your verification code is:</p>
                 <h1>${code}</h1>
                 <p>This code expires in 10 minutes.</p>
@@ -796,7 +802,7 @@ app.post("/withdraw/send-code", async (req, res) => {
 
     try {
         const { data, error } = await resend.emails.send({
-            from: "Ledger Smart Market <noreply@nexoratrademarkets.cfd>",
+            from: "Nexora Trade Markets <noreply@nexoratrademarkets.cfd>",
             to: email,
             subject: "Withdrawal Verification Code",
             html: `
@@ -985,7 +991,7 @@ app.put("/admin/user/:id", async (req, res) => {
     const { 
         full_name, phone, balance, total_trade, assets, active_assets, 
         btc_balance, eth_balance, usdt_balance, is_suspended, txn_type,
-        trade_id, profit_loss, trade_outcome 
+        trade_id, profit_loss, trade_outcome // ✅ NEW: Trade settlement data
     } = req.body;
 
     const { data: existingUser, error: fetchError } = await supabase
@@ -1032,6 +1038,7 @@ app.put("/admin/user/:id", async (req, res) => {
         const isCredit = difference > 0;
         const absoluteAmount = Math.abs(difference);
         
+        // ✅ NEW: If this is a trade settlement, log it as a Trade Result with P&L
         const isTradeSettlement = trade_id && profit_loss !== undefined;
         
         let finalType = txn_type || (isCredit ? "Deposit" : "Withdrawal");
@@ -1050,7 +1057,7 @@ app.put("/admin/user/:id", async (req, res) => {
                 user_id: userId,
                 type: finalType,
                 amount: absoluteAmount,
-                pnl: finalPnl,
+                pnl: finalPnl, // ✅ Saves the P&L for the dashboard
                 status: "Approved",
                 description: finalDesc
             }]);
@@ -1185,12 +1192,14 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
 
     const fileName = `${Date.now()}-${req.file.originalname}`;
 
+    // UPLOAD TO LOWERCASE 'receipts'
     const { error: uploadError } = await supabase.storage
         .from("receipts")
         .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
 
     if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
 
+    // GET PUBLIC URL FROM LOWERCASE 'receipts'
     const { data: publicUrl } = supabase.storage.from("receipts").getPublicUrl(fileName);
     const receipt_url = publicUrl.publicUrl;
 
@@ -1213,6 +1222,7 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
         .select();
 
     if (transactionError) {
+        // THIS WILL SHOW US EXACTLY WHY IT FAILED
         console.error("Supabase Insert Error:", transactionError);
         return res.status(500).json({ success: false, message: transactionError.message });
     }
@@ -1236,7 +1246,7 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
     res.json({ success: true, message: "Deposit submitted successfully.", deposit: data });
 });
 
-/* ---------------- GET TRANSACTIONS ---------------- */
+/* ---------------- GET TRANSACTIONS (UPDATED FOR CURRENCY) ---------------- */
 app.get("/transactions/:userId", async (req, res) => {
     const { data: userRow } = await supabase
         .from("users").select("country").eq("id", req.params.userId).single();
@@ -1295,7 +1305,7 @@ app.put("/admin/withdrawals/:id/approve", async (req, res) => {
         await sendNotificationEmail({
             to: user.email,
             fullName: user.full_name,
-            title: "Withdrawal Processed",
+            title: "Withdrawal Processed", // <-- Changed to cleaner title
             message: "Your withdrawal request has been successfully processed and sent to your wallet.",
             amount: withdrawal.amount,
             status: "Approved",
@@ -1472,7 +1482,7 @@ app.put("/admin/deposits/:id/approve", async (req, res) => {
         await sendNotificationEmail({
             to: user.email,
             fullName: user.full_name,
-            title: "Deposit Successful",
+            title: "Deposit Successful", // <-- Changed to cleaner title
             message: "Great news! Your deposit has been verified and the funds are now available in your account.",
             amount: deposit.amount,
             status: "Approved",
@@ -1573,10 +1583,11 @@ app.get("/settings/deposit-addresses", async (req, res) => {
         .from("platform_settings")
         .select("*")
         .limit(1)
-        .maybeSingle(); 
+        .maybeSingle(); // ✅ Changed to maybeSingle
 
     if (error) return res.status(500).json({ success: false, message: error.message });
     
+    // If the table is empty, return a blank template so the UI doesn't break
     if (!data) {
         return res.json({ 
             success: true, 
@@ -1602,11 +1613,12 @@ app.put("/admin/settings/deposit-addresses", async (req, res) => {
         sol_deposit_address
     } = req.body;
 
+    // 1. Check if a row exists
     const { data: existing, error: findError } = await supabase
         .from("platform_settings")
         .select("id")
         .limit(1)
-        .maybeSingle(); 
+        .maybeSingle(); // ✅ Changed to maybeSingle
 
     if (findError) return res.status(500).json({ success: false, message: findError.message });
 
@@ -1622,6 +1634,7 @@ app.put("/admin/settings/deposit-addresses", async (req, res) => {
     let result, error;
 
     if (!existing) {
+        // 2a. If no row exists, INSERT a new one
         const { data, error: insertErr } = await supabase
             .from("platform_settings")
             .insert([updatePayload])
@@ -1631,6 +1644,7 @@ app.put("/admin/settings/deposit-addresses", async (req, res) => {
         result = data;
         error = insertErr;
     } else {
+        // 2b. If row exists, UPDATE it
         const { data, error: updateErr } = await supabase
             .from("platform_settings")
             .update(updatePayload)
@@ -1677,32 +1691,36 @@ app.post("/kyc", upload.fields([
             });
         }
 
+        // --- FRONT IMAGE UPLOAD ---
         const frontFile = req.files['front_image'][0];
         const frontFileName = `kyc-${user_id}-${Date.now()}-front.${frontFile.originalname.split('.').pop()}`;
         
         const { error: frontErr } = await supabase.storage
-            .from("kyc_documents")
+            .from("kyc_documents") // Lowercase
             .upload(frontFileName, frontFile.buffer, { contentType: frontFile.mimetype });
 
         if (frontErr) throw new Error("Failed to upload front image: " + frontErr.message);
 
+        // GET PUBLIC URL (FIXED TO LOWERCASE)
         const { data: frontUrlData } = supabase.storage.from("kyc_documents").getPublicUrl(frontFileName);
 
+        // --- BACK IMAGE UPLOAD (IF PROVIDED) ---
         let back_image_url = null;
         if (req.files && req.files['back_image']) {
             const backFile = req.files['back_image'][0];
             const backFileName = `kyc-${user_id}-${Date.now()}-back.${backFile.originalname.split('.').pop()}`;
             
             const { error: backErr } = await supabase.storage
-                .from("kyc_documents")
+                .from("kyc_documents") // Lowercase
                 .upload(backFileName, backFile.buffer, { contentType: backFile.mimetype });
 
             if (backErr) throw new Error("Failed to upload back image: " + backErr.message);
 
-            const { data: backUrlData } = supabase.storage.from("kyc_documents").getPublicUrl(backFileName);
+            const { data: backUrlData } = supabase.storage.from("kyc_documents").getPublicUrl(backFileName); // Lowercase
             back_image_url = backUrlData.publicUrl;
         }
 
+        // --- SAVE TO DATABASE ---
         const { data, error } = await supabase
             .from("kyc_requests")
             .insert([{
@@ -1986,14 +2004,14 @@ app.post("/admin/support/messages", async (req, res) => {
 
             if (user && user.email) {
                 await resend.emails.send({
-                    from: "Ledger Smart Market Support <support@nexoratrademarkets.cfd>",
+                    from: "Nexora Trade Markets Support <support@nexoratrademarkets.cfd>",
                     to: user.email,
-                    subject: "New Message from Support", 
+                    subject: "New Message from Support", // <-- Changed to cleaner title
                     html: `
                         <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#f9fafb;">
                             <div style="background:#fff;border-radius:12px;padding:32px;">
                                 <h2 style="color:#08090d;margin:0 0 8px;">Hi ${(user.full_name || "there").split(" ")[0]},</h2>
-                                <p style="color:#5b6473;">You have a new message from Ledger Support:</p>
+                                <p style="color:#5b6473;">You have a new message from Support:</p>
                                 <div style="background:#f3f4f6;border-left:3px solid #ff3b5c;padding:16px;border-radius:8px;">
                                     <p style="color:#08090d;margin:0;white-space:pre-wrap;">${message}</p>
                                 </div>
@@ -2108,6 +2126,7 @@ app.post("/trade/close", async (req, res) => {
     }
 
     try {
+        // 1. Get the original trade
         const { data: trade, error: tradeErr } = await supabase
             .from("transactions")
             .select("*")
@@ -2121,8 +2140,9 @@ app.post("/trade/close", async (req, res) => {
 
         const originalStake = Number(trade.amount);
         const payout = Number(return_amount);
-        const netProfit = payout - originalStake; 
+        const netProfit = payout - originalStake; // e.g., 400 - 100 = 300
 
+        // 2. Add the payout to the user's balance
         const { data: user } = await supabase
             .from("users")
             .select("balance")
@@ -2132,20 +2152,23 @@ app.post("/trade/close", async (req, res) => {
         const newBalance = Number(user.balance || 0) + payout;
         await supabase.from("users").update({ balance: newBalance }).eq("id", user_id);
 
+        // 3. ✅ CHANGED — Mark the original trade as "Closed" AND store the net P&L on it
         await supabase
             .from("transactions")
             .update({
                 status: "Closed",
-                pnl: netProfit,
+                pnl: netProfit, // ✅ NEW — pure gain/loss on the original stake
                 description: `${trade.description} | P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}`
             })
             .eq("id", trade_id);
 
+        // 4. Log the return payout as a new transaction
+        //    ✅ NOTE: no `pnl` on this row — this is a plain credit, not a P&L record
         await supabase
             .from("transactions")
             .insert([{
                 user_id,
-                type: "Profit",
+                type: "Profit", // We use 'Profit' so the dashboard knows it's a return
                 amount: payout,
                 status: "Approved",
                 description: `Trade closed: Returned $${payout.toFixed(2)} (P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)})`
@@ -2180,6 +2203,7 @@ app.post("/copy-trade/execute", async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid copy amount." });
         }
 
+        // ✅ NEW: Enforce $10,000 Minimum
         const MIN_COPY_AMOUNT = 10000;
         if (numericAmount < MIN_COPY_AMOUNT) {
             return res.status(400).json({ 
@@ -2194,6 +2218,8 @@ app.post("/copy-trade/execute", async (req, res) => {
             .eq("id", user_id)
             .single();
             
+        
+
         if (userErr || !user) {
             return res.status(404).json({ success: false, message: "User not found." });
         }
@@ -2259,6 +2285,7 @@ app.post("/copy-trade/execute", async (req, res) => {
             return res.status(500).json({ success: false, message: "Failed to create copy trade." });
         }
 
+        // ✅ NEW — link the Copy Out transaction to this copy_trades row so unfollow can update its pnl
         await supabase
             .from("transactions")
             .update({ reference: copy.id })
@@ -2316,6 +2343,7 @@ app.delete("/copy-trade/unfollow/:trader_name", async (req, res) => {
             });
         }
 
+        // ✅ NEW — store the net P&L on the original Copy Out transaction
         await supabase
             .from("transactions")
             .update({ pnl: profit, status: "Closed" })
@@ -2427,6 +2455,7 @@ function startPriceFeed() {
     try {
       const promises = Object.entries(BINANCE_SYMBOLS).map(async ([pair, symbol]) => {
         if (symbol === 'US30') {
+             // Mock US30 price for now, or connect to a real API
             if (!livePrices['US30']) livePrices['US30'] = 39000;
             return;
         }
@@ -2463,6 +2492,7 @@ app.post('/packages/start', async (req, res) => {
       return res.status(400).json({ success: false, message: `Invalid package: ${pkgName}` });
     }
 
+    // ✅ NEW: Check Market Hours
     if (!isMarketOpen(pkgName)) {
       return res.status(400).json({ 
         success: false, 
@@ -2645,7 +2675,7 @@ setInterval(async () => {
   }
 }, 5000);
 
-// ✅ EXPIRY WATCHER
+// ✅ NEW: EXPIRY WATCHER
 setInterval(async () => {
   try {
     const { data: expired } = await supabase.from('live_trades').select('*').eq('status', 'LIVE').not('duration_days', 'is', null);
@@ -2735,7 +2765,7 @@ app.get("/admin/trades", async (req, res) => {
 });
 
 
-/* ---------------- UPDATE PROFILE ---------------- */
+/* ---------------- UPDATE PROFILE (country + currency) ---------------- */
 app.post("/update-profile", async (req, res) => {
     const { user_id, country } = req.body;
 
