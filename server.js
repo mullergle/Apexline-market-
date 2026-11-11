@@ -451,6 +451,7 @@ app.post("/login/google", async (req, res) => {
                 return res.status(500).json({ success: false, message: insertError.message });
             }
             user = newUser;
+            await sendWelcomeEmail({ to: normalizedEmail, fullName: user.full_name });
         } else {
             const updates = {};
             if (user.is_admin === null) updates.is_admin = false;
@@ -833,7 +834,7 @@ app.post("/withdraw/create", async (req, res) => {
 
     const { data: userCheck, error: userCheckErr } = await supabase
         .from("users")
-        .select("is_verified, balance")
+        .select("is_verified, balance, full_name")
         .eq("id", user_id)
         .single();
 
@@ -914,6 +915,17 @@ app.post("/withdraw/create", async (req, res) => {
 
     await supabase.from("password_resets").delete().eq("email", email);
 
+    // ✅ EMAIL NOTIFICATION: WITHDRAWAL REQUESTED
+    await sendNotificationEmail({
+        to: email,
+        fullName: userCheck.full_name,
+        title: "Withdrawal Request Received",
+        message: `We have received your request to withdraw funds via ${method}. Your request is currently being processed and is pending approval.`,
+        amount: cleanAmount,
+        status: "Pending",
+        isError: false
+    });
+
     res.json({
         success: true,
         message: "Withdrawal request submitted successfully.",
@@ -990,7 +1002,7 @@ app.put("/admin/user/:id", async (req, res) => {
 
     const { data: existingUser, error: fetchError } = await supabase
         .from("users")
-        .select("balance, full_name, phone")
+        .select("balance, full_name, phone, email")
         .eq("id", userId)
         .single();
 
@@ -1201,6 +1213,9 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
     const cleanAmount = numericAmount;
     const description = `${payment_method || 'Crypto'} Deposit`;
 
+    // Fetch user for email
+    const { data: user } = await supabase.from("users").select("full_name, email").eq("id", user_id).single();
+
     const { data: txnData, error: transactionError } = await supabase
         .from("transactions")
         .insert([{
@@ -1232,6 +1247,19 @@ app.post("/deposit", upload.single("receipt"), async (req, res) => {
         .select();
 
     if (error) return res.status(500).json({ success: false, message: error.message });
+
+    // ✅ EMAIL NOTIFICATION: DEPOSIT REQUESTED
+    if (user && user.email) {
+        await sendNotificationEmail({
+            to: user.email,
+            fullName: user.full_name,
+            title: "Deposit Received",
+            message: `We have received your deposit request and are currently verifying the transaction. Your funds will be credited once approved.`,
+            amount: cleanAmount,
+            status: "Pending",
+            isError: false
+        });
+    }
 
     res.json({ success: true, message: "Deposit submitted successfully.", deposit: data });
 });
@@ -2048,7 +2076,7 @@ app.post("/trade", async (req, res) => {
     try {
         const { data: user, error: userErr } = await supabase
             .from("users")
-            .select("balance")
+            .select("balance, full_name, email")
             .eq("id", user_id)
             .single();
 
@@ -2084,6 +2112,19 @@ app.post("/trade", async (req, res) => {
             await supabase.from("users").update({ balance: currentBalance }).eq("id", user_id);
             console.error("Trade log error:", txnError);
             return res.status(500).json({ success: false, message: "Failed to log trade." });
+        }
+
+        // ✅ EMAIL NOTIFICATION: TRADE OPENED
+        if (user.email) {
+            await sendNotificationEmail({
+                to: user.email,
+                fullName: user.full_name,
+                title: "Trade Opened",
+                message: `Your ${action} order for ${pair} has been successfully executed.`,
+                amount: numericAmount,
+                status: "Open",
+                isError: false
+            });
         }
 
         res.json({ 
@@ -2125,7 +2166,7 @@ app.post("/trade/close", async (req, res) => {
 
         const { data: user } = await supabase
             .from("users")
-            .select("balance")
+            .select("balance, full_name, email")
             .eq("id", user_id)
             .single();
 
@@ -2150,6 +2191,19 @@ app.post("/trade/close", async (req, res) => {
                 status: "Approved",
                 description: `Trade closed: Returned $${payout.toFixed(2)} (P/L: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)})`
             }]);
+
+        // ✅ EMAIL NOTIFICATION: TRADE CLOSED
+        if (user && user.email) {
+            await sendNotificationEmail({
+                to: user.email,
+                fullName: user.full_name,
+                title: "Trade Closed",
+                message: `Your trade has been closed successfully. ${netProfit >= 0 ? 'Profit' : 'Loss'} realized: $${Math.abs(netProfit).toFixed(2)}.`,
+                amount: Math.abs(netProfit),
+                status: netProfit >= 0 ? "Profit" : "Loss",
+                isError: netProfit < 0
+            });
+        }
 
         res.json({ 
             success: true, 
@@ -2264,6 +2318,19 @@ app.post("/copy-trade/execute", async (req, res) => {
             .update({ reference: copy.id })
             .eq("id", txnData[0].id);
 
+        // ✅ EMAIL NOTIFICATION: COPY TRADE STARTED
+        if (user.email) {
+            await sendNotificationEmail({
+                to: user.email,
+                fullName: user.full_name,
+                title: "Copy Trade Started",
+                message: `You are now successfully copying ${trader_name}. The allocated funds have been deducted from your balance.`,
+                amount: numericAmount,
+                status: "Active",
+                isError: false
+            });
+        }
+
         res.json({ 
             success: true, 
             message: `You are now copying ${trader_name} with $${numericAmount.toFixed(2)}.`,
@@ -2325,7 +2392,7 @@ app.delete("/copy-trade/unfollow/:trader_name", async (req, res) => {
 
         const { data: user } = await supabase
             .from("users")
-            .select("balance")
+            .select("balance, full_name, email")
             .eq("id", user_id)
             .single();
 
@@ -2335,6 +2402,19 @@ app.delete("/copy-trade/unfollow/:trader_name", async (req, res) => {
         const { error: delErr } = await supabase.from("copy_trades").delete().eq("id", copy.id);
         if (delErr) {
             console.error("⚠️ Refund succeeded but copy_trade delete failed:", delErr);
+        }
+
+        // ✅ EMAIL NOTIFICATION: COPY TRADE CLOSED
+        if (user && user.email) {
+            await sendNotificationEmail({
+                to: user.email,
+                fullName: user.full_name,
+                title: "Copy Trade Closed",
+                message: `You have successfully stopped copying ${traderName}. The funds have been returned to your main balance.`,
+                amount: returnAmount,
+                status: profit >= 0 ? "Profit" : "Loss",
+                isError: profit < 0
+            });
         }
 
         res.json({ 
@@ -2489,7 +2569,7 @@ app.post('/packages/start', async (req, res) => {
       return res.status(503).json({ success: false, message: `Price for ${pkg.pair} not available yet. Please try again.` });
     }
 
-    const { data: user } = await supabase.from('users').select('balance').eq('id', user_id).single();
+    const { data: user } = await supabase.from('users').select('balance, email, full_name').eq('id', user_id).single();
     if (Number(user.balance) < pkg.min_price) {
       return res.status(400).json({ success: false, message: 'Insufficient balance to lock as margin.' });
     }
@@ -2510,7 +2590,20 @@ app.post('/packages/start', async (req, res) => {
     }]).select().single();
     
     if (error) throw error;
-    
+
+    // ✅ EMAIL NOTIFICATION: PACKAGE TRADE STARTED
+    if (user.email) {
+        await sendNotificationEmail({
+            to: user.email,
+            fullName: user.full_name,
+            title: "Live Trade Opened",
+            message: `Your ${dir} position on ${pkg.pair} has been opened successfully at ${entryPrice}.`,
+            amount: pkg.min_price,
+            status: "Open",
+            isError: false
+        });
+    }
+
     res.json({ success: true, trade: data });
   } catch (err) { 
     res.status(500).json({ success: false, message: err.message }); 
@@ -2569,7 +2662,7 @@ app.post('/packages/:id/close', async (req, res) => {
 
     if (closeErr) throw closeErr;
 
-    const { data: user } = await supabase.from('users').select('balance').eq('id', trade.user_id).single();
+    const { data: user } = await supabase.from('users').select('balance, email, full_name').eq('id', trade.user_id).single();
     const newBalance = Number(user.balance) + realizedPnl;
     await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
 
@@ -2581,6 +2674,19 @@ app.post('/packages/:id/close', async (req, res) => {
       status: 'Approved',
       description: `${trade.package} ${trade.direction} closed. P/L: ${realizedPnl >= 0 ? '+' : '-'}$${Math.abs(realizedPnl).toFixed(2)}`
     }]);
+
+    // ✅ EMAIL NOTIFICATION: TRADE CLOSED MANUALLY
+    if (user && user.email) {
+        await sendNotificationEmail({
+            to: user.email,
+            fullName: user.full_name,
+            title: "Trade Closed",
+            message: `Your live trade for ${trade.package} was closed manually. The final result has been applied to your balance.`,
+            amount: Math.abs(realizedPnl),
+            status: realizedPnl >= 0 ? "Profit" : "Loss",
+            isError: realizedPnl < 0
+        });
+    }
 
     res.json({
       success: true,
@@ -2626,7 +2732,7 @@ setInterval(async () => {
           close_reason: 'auto_margin'
         }).eq('id', trade.id);
 
-        const { data: user } = await supabase.from('users').select('balance').eq('id', trade.user_id).single();
+        const { data: user } = await supabase.from('users').select('balance, email, full_name').eq('id', trade.user_id).single();
         const newBalance = Number(user.balance) + realizedPnl;
         await supabase.from('users').update({ balance: newBalance }).eq('id', trade.user_id);
 
@@ -2638,6 +2744,19 @@ setInterval(async () => {
           status: 'Approved',
           description: `AUTO-CLOSE (Stop Out) on ${trade.package}. P/L: -$${Math.abs(realizedPnl).toFixed(2)}`
         }]);
+
+        // ✅ EMAIL NOTIFICATION: MARGIN CALL / STOP OUT
+        if (user && user.email) {
+            await sendNotificationEmail({
+                to: user.email,
+                fullName: user.full_name,
+                title: "Trade Auto-Closed (Stop Out)",
+                message: `Your live trade for ${trade.package} reached the maximum loss threshold and was automatically closed to protect your account from going negative.`,
+                amount: Math.abs(realizedPnl),
+                status: "Loss",
+                isError: true
+            });
+        }
       }
     }
   } catch (err) {
@@ -2672,7 +2791,7 @@ setInterval(async () => {
         close_reason: 'expired'
       }).eq('id', t.id);
 
-      const { data: user } = await supabase.from('users').select('balance').eq('id', t.user_id).single();
+      const { data: user } = await supabase.from('users').select('balance, email, full_name').eq('id', t.user_id).single();
       const newBalance = Number(user.balance) + realizedPnl;
       await supabase.from('users').update({ balance: newBalance }).eq('id', t.user_id);
 
@@ -2684,6 +2803,19 @@ setInterval(async () => {
         status: 'Approved',
         description: `${t.package} Expired. P/L: ${realizedPnl >= 0 ? '+' : '-'}$${Math.abs(realizedPnl).toFixed(2)}`
       }]);
+
+      // ✅ EMAIL NOTIFICATION: TRADE EXPIRED
+      if (user && user.email) {
+          await sendNotificationEmail({
+              to: user.email,
+              fullName: user.full_name,
+              title: "Trade Expired",
+              message: `Your live trade for ${t.package} has reached its expiration time and was closed automatically.`,
+              amount: Math.abs(realizedPnl),
+              status: realizedPnl >= 0 ? "Profit" : "Loss",
+              isError: realizedPnl < 0
+          });
+      }
     }
   } catch (err) {
     console.error('Expiry Watcher Error:', err);
